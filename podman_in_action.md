@@ -106,3 +106,43 @@ Another very useful option would be `:O`, this is super useful if you want the h
 
 `podman run --mount` works the same as `pdoman run -v`, and it is more explicit.
 In most of the cases, the container image should be read only,and any data that needs to be written should be stored outside of images via volume.
+
+## 1.4 Pods
+
+Pod is a group of one or more containers working together for a common purpose and sharing the same namespace and cgroups. Also podman ensure that all container processed within a pod share the same SELinux labels.
+
+### 1.4.1 Running Pods
+
+Podman pods always contain a container called infra, which hold open the namespaces and cgroups. It has a container monitor process called conmon that will monitor it.
+Podamn allows for init container, than can run the first time pods is created, or run everytime pod is started. With the init container completed, podman starts the primary containers. Here podman allows sidecar containers to monitor the primary container. The number of sidecar containers can be 0 or more.
+
+The biggest advantage of running pods: you start the pod, every containers inside it start. You stop the pod, every containers inside it stop.
+
+### 1.4.2 Creating a pod
+
+`podman pod create -p 8080:8080 --name mypod --volume ./html:/var/www/html:z` to create a pod named mypod using `podman pod create` command.
+Notice that, here the port is binds 8080 to 8080, and the volume is mounted, this is done for every containers inside the pod.
+
+### 1.4.3 Adding containers to pod
+
+`podman create --pod mypod --name myapp quay.io/lzabry/myimage` to create a main container.
+`podman create --pod mypod --name time --workdir /var/www/html ubi8 ./time.sh` to create a sidecar container. Here the workdir set the location in container and the time.sh will run from this location as `/var/www/html/time.sh`
+
+Here what happens is, the podman mounts the /html on local host to /var/www/html inisdei container. So inside the second container, the time.sh could be found.
+
+### 1.4.4 Starting a pod
+
+`podman pod start mypod` to start the pod.
+
+### 1.4.5 Stopping a pod
+
+`podman pod stop mypod` to stop the pod.
+
+### 1.4.6 List the pod
+
+`podman pod list` to list pods.
+
+### 1.4.7 Removing pods
+
+`podman ps --all --format "{{.ID}} {{.Image}} {{.Pod}}"` to check the containers.
+`podman pod rm` ro remove pod.
