@@ -146,3 +146,62 @@ Here what happens is, the podman mounts the /html on local host to /var/www/html
 
 `podman ps --all --format "{{.ID}} {{.Image}} {{.Pod}}"` to check the containers.
 `podman pod rm` ro remove pod.
+
+## 2.1 Customization and configuration files
+
+Podman has a lot of configuration files for you to change the default behaviour.
+
+### 2.1.1 Configuration files for storage
+
+`sudo podman info` and `podman info` will show the images storage information for rootless and rootful contaners.
+
+To change the default storage place, use `/etc/containers/storage.conf`
+
+By default, the podman uses overlay as the storage driver, which is the overlay2 in docker.
+You might want to change the overlay driver from FUSE(default one)
+
+### 2.1.2 Configuration files for registries
+
+Check `/etc/containers/registries.conf`, the setting you want to tweak is unqalified-search-registries, you can change the default public registires it is used to pull images from.
+Another interesting thing you can do is to block users from pulling from certain registries.
+For example,
+
+```
+[[registry]]
+Location = "docker.io"
+blocked=true
+```
+
+By this, you block the users from pulling from docker.io.
+
+Also, if one of your users is working without internet, and you want to provide a mirror registry to let them pull, you can do this:
+
+```
+[[registry]]
+location="registry.access.redhat.com"
+[[registry.mirror]]
+location="mirror-1.com"
+```
+
+### 2.1.3 Configuration files for engines
+
+You can have multiple .conf files that define the env the container should be run with.
+`podman run --rm ubi8 printenv`
+
+How to change these env variables? Do this:
+
+```
+mkdir -p $HOME/.config/containers/containers.conf.d
+cat << _EOF > $HOME/.config/containers/containers.conf.d/env.conf
+[containers]
+env=[ "foo=bar" ]
+_EOF
+```
+
+Here the author used a very complex example of running podman itself inside a container, because inside the container many env does not work, here the author modify the .conf file so that, the container can access to the host service.
+
+### 2.1.4 System Configuration files
+
+`/etc/subuid` and `/etc/subgid` files define the mapping of namespace. Podman reads them to assign uid, so pretty important.
+
+## 2.2
