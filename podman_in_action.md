@@ -204,4 +204,73 @@ Here the author used a very complex example of running podman itself inside a co
 
 `/etc/subuid` and `/etc/subgid` files define the mapping of namespace. Podman reads them to assign uid, so pretty important.
 
-## 2.2
+## 2.2 Rootless Containers
+
+The problem with docker is that, even if the docker-client can be run as non-root, it connects to a root running daemon, giving full root access to the host OS.
+
+### 2.2.1 How does rootless Podman work?
+
+Let's first run a rootless container as an example, do `podman run -d -p 8080:8080 --name myapp quay.io/lzabry/myimage`
+
+#### 2.2.1.1 Images contain content owned by multiple user identifiers(UIDs)
+
+In Linux, UID and GID are assigned to process and stored on filesystem objects. This access is called discretionary access contol(DAC).
+
+`podman run --user=root --rm quay.io/lzabry/myimage -- bash -c "find / -mount -printf \"%U=%u\n\" | sort -un" 2>/dev/null` Let's run the container as root to examine every file within the image.
+
+You will see that there are 4 uids inside container:
+
+```
+0=root
+48=apache
+1001=default
+65534=nobody
+```
+
+Because linux does not allow files to be created by multiple users, you will have to get creative with the userids you have.
+
+To check the uid mapping, you can do `cat /etc/subuid`
+
+On my pc, it shows `lzabry:100000:65536`. This means that lzabry as a user can have `100000 to 165536` for its assigned user id in namespace.
+Why starts at 100000? Because Linux allows you to have around 99000 regular users, and 1000 UIDs reserved for system service.
+
+Every process on a Linux Namespace is in a user namespace. `cat /proc/self/uid_map` will show `0     0 4294967295`, which basically means, 0 -> 0, 1 -> 1, ......
+
+In host namespace, there is no real mapping.
+
+We can now enter into user namespace. Podman has a special command called `podman unshare`, which allows you to enter a user namespace without launching a container.
+
+Let's do this command again using `podman unsahre cat /proc/self/uid_map`, you will see `0       10000 1  1       100000 65536`
+
+This shows that UID 0 is mapped to UID 1000(my uid) for a range of 1, and UID 1 is mapped to 100000 for a range of 65536.
+
+Any UID not mapped to the user namespace is reported within the user-namespace as nobody user. you can confirm by `podman unshare ls -ld /`
+
+And user cannot actually make change to file created by `nobody` unless the `other` rule allows for it.
+
+`podman unshare bash -c "id ; ls -l /etc/passwd; grep lzabry /etc/passwd; touch /etc/passwd"`, you will see that /etc/passwd is world reable, but you cannot make change to it.
+
+`podman unshare bash -c "mkdir test;touch test/testfile; chown -R 1:1 test"`, this will create a file that is owned by 100000 on host, and if you want to delete it on host you cannot, because outside the user namespace, you have access to only your UID, you don't have access to the additional UIDs.
+
+This looks weird because inside container I am actually root, and I cannot rmove something? That is because on linux, the root processes actually is powerful with Linux capabilites, and without it, it is not that powerful.
+
+Besides userspace, whether you can mount a file is actually also determined by mount namespace. The mount points are not seen by the process outside the mount namespace.
+For example, `echo hello > /tmp/testfile` and `mount --bind /tmp/testfile /etc/shadow` will give you an error saying only root can do that. But `podman unshare bash -c "mount -o bind /tmp/testfile /etc/shadow; cat /etc/shadow"` will succeed. Once you exit, everything return to normal.
+
+### 2.2.2 Rootless Podman under the covers
+
+Now let's understand what happesn what Podman does when it runs a container.
+
+1. Podman first read `/etc/subuid` and `/etc/subgid` files, looking for the username and UID. Once the Podman finds the entry, it generates a user namespace for you, Podman than launches the podman pause process to hold open the user and mount namespace.
+
+2. Podman pull the images. It will check if the image exists in local container storage. If not, it will pull using containers/image library. After all the layers are assemebled and untarred, containers chowns the UID/GIDs of files into home directory.
+
+3. Podman creates the container. It creates a new container entry in its database, and asks the storage library to make a writable layer for the container, use overlayfs to stack this writable layer.
+
+4. Podman set up the network by using slirp4netns to configure the host network and simulate a VPN for the container.
+
+5. Starting the container monitor, conmon.
+
+6. Launch the OCI runtime. It includes set up additional namespaces, configure cgroups2, set up the SELinux label .... and conmon reports the success back to Podman
+
+7. podman stop. The kernel sends a SIGCHLD to the conmon process.
