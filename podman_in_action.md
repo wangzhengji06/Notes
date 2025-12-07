@@ -274,3 +274,76 @@ Now let's understand what happesn what Podman does when it runs a container.
 6. Launch the OCI runtime. It includes set up additional namespaces, configure cgroups2, set up the SELinux label .... and conmon reports the success back to Podman
 
 7. podman stop. The kernel sends a SIGCHLD to the conmon process.
+
+## 3.1 Integration with systemd
+
+A way to share the containerized service with the world is using systemd.
+
+### 3.1.1 Running systemd within a container
+
+Microservice is defined as one specialized service within a container. This single service runs as the initial PID within the containers and writes its log directly to `stdout` and `stderr`. Kubernetes assumes this way. Another school of thought would run several services inside one container.
+
+A huge advantage of the latter is, microservice run the service using PID 1, but if you run multiple processes inside a container, the zombie process can be killed(`podman run -init`)
+
+`podman pull ubi8-init` and `podman inspect ubi8-init --format '{{ .Config.Cmd }}'`, you will find the output is `/sbin/init`, this shows that the image is trying to run as a systemd process.
+
+#### 3.1.1.1 Containerzied systemd requirements
+
+Systemd needs some requirements to be met for running within a rootless container.
+
+1. /run on tmpfs
+2. /tmp on tmpfs
+3. /var/log/journald on tmpfs
+4. ENV: container exists
+5. STOPSIGNAL=SIGTMIN + 3
+
+#### 3.1.1.2 Podman container in systemd mode
+
+`podman create --rm --name SystemD -it --systemd=always ubi8-init sh` here, `--systemd=always` means runs the container in systemd mode even when not running systemd.
+`podman inspect SystemD --format '{{ .Config.StopSignal}}'` will show SIGRTMIN + 3.
+`podman start --attach SystemD` to start the container.
+`mount | grep -e /tmp -e /run | head -2` show the mount information related to the first two lines about /tmp and /run.
+`printenv container` will return Oci.
+
+Notice that the above commands use `sh` to overide the command which casues `/sbin/sh` to be overwritten as an entry point. We will run again.
+
+`podman run -ti ubi8-init` will start the systemd inside the container. systemd would ignore SIGTERM by pressing `CTRL + C`. You need to do `podman stop l` in different terminal.
+
+#### 3.1.1.3 Running an Apache service within a systemd container
+
+```
+FROM ubi8-init
+RUN dnf -y install httpd; dnf -y clean all
+RUN systemctl enable httpd.service
+```
+
+Now this will run httpd service at the start of the container.
+
+`podman build -t my-systemd .` and `podman run -d --rm -p 8080:80 -v ./html:/var/www/html:Z my-systemd`, now you should see the HTTPD service being started like it is inside a vm`podman logs xx` you will find there is no output, because pid=1 is systemd, if you need to check log, you need to exec inside the container to read the httpd logs.
+
+### 3.1.2 journald for logging and events
+
+#### 3.1.2.1 Log Driver
+
+There are several log driver options, including Journald, k8s-file. Journald persist logs after container removal, and also supports log rotation.
+You can check the default log driver on system by `podman info --format '{{ .Host.LogDriver }}'`
+
+If it is not journald, you can do:
+
+```
+mkdir -p $HOME/.config/containers/containers.conf.d
+
+cat > $HOME/.config/containers/containers.conf.d/log_driver.conf << _EOF
+[containers]
+log_driver="journald"
+_EOF
+```
+
+Next, run this `podman run --rm --name test2 ubi8 echo "Check if logs persist"`
+and `journalctl -b | grep "Check if logs persist"` will show that indeed it records the journal for podman.
+
+#### 3.1.2.2 Events
+
+Log driver records what happens inside container, and events log records lifecycle of the container.
+`podman info --format '{{ .Host.EventLogger }}'` to check the event logger.
+`podman events --filter event=start --since 1h` You can see the start event of the last container you ran.
