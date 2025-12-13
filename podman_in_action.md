@@ -404,15 +404,15 @@ The following things happened.
 
 Podman orchestrates the autoupdate using these two files: `/usr/lib/systemd/system/podman-auto-update.timer` and `/usr/lib/systemd/user/podman-auto-update.timer`
 
-#### 3.1.4 Running containers in notify unit files
+### 3.1.4 Running containers in notify unit files
 
 You can define
 
-#### 3.1.5 Rolling back failed containers after update
+### 3.1.5 Rolling back failed containers after update
 
 Podman autp-upate checks if the new service is fully up and running, and if the check fails, Podman can automatically roll back to previous containers.
 
-#### 3.1.6 Socket Activated Podman containers
+### 3.1.6 Socket Activated Podman containers
 
 A containerized service can tell systemd when it's actually “ready,” using sd-notify.
 
@@ -466,4 +466,135 @@ Restart=always
 
 [Install]
 WantedBy=multi-user.target
+```
+
+## 3.2 Working with Kubernetes
+
+### 3.2.1 Kubernetes YAML files
+
+It allows you to model the desired state of the application in a declaritive language.
+
+### 3.2.2 Generating Kubernetes YAML files with Podman
+
+`podman generate kube` this command captures the description of the local pods and containers, and then transaltes them into Kubernetes YAML file.
+
+Let's do a step-by-step walk-through.
+
+1. First, remove the container if it exists. Using `--ignore` tells podman rm command not to report errors when container does not exist.
+   `podman rm -f --ignore myapp`
+2. Then we recreate the container
+   `podman create -p 8080:8080 myapp quay.io/lzabry/myimage`
+3. Then we can geneate the Kubernetes YAML file.
+   `podman generate kube myapp > myapp.yaml`
+
+Here by checking the `myapp.yaml`, you will realize that even if we did not create pod, the yaml file will generate a `myapp-pod`, because Kubernetes works with pod.
+Also notices that the image name is recorded to tell Kubernetes where to download the images for the container from. Of course there is also a command argument.
+The podman ports are also recorded, of course.
+Finally, at the end of the containers section, you see `securityContext`, that drops three additional Linux capabilities: `CAP_MKNOD`, `CAO_NET_RAW`, `CAP_AUDIT_WRITE`.
+
+Usually you can just run this Kubernetes YAML file in any Kubernetes cluter by `kuberctl create -f myapp.yml`
+
+### 3.2.3 Generating Podman pods and containers from Kubernetes YAML
+
+Use command `podman play kube` to create pods, containers, and volumes based on structured Kubernetes YAML files.
+
+Let's do a step-by-step walk-through.
+
+1. Again remove the containe first. `podman rm -f --ignore myapp`
+2. `podman play kube myapp.yaml` runs the pod and container from this command.
+3. `podman pod ps --ctr-names` to list the containers running within the pod.
+4. `podman pod stop myapp-pod` to shut down the podman's pod.
+
+#### 3.2.3.1 Shutting down the pods and containes based on a Kubernetes YAML file
+
+`podman pod stop` allows you to shut down the pod, but sometimes you want to tear down and also remove them from the system.
+Use `podman play kube myapp.yaml --down` will do that without touching the volumes.
+
+This leaves you with a fresh state where you can do `podman play kube myapp.yaml` again, which mimics the default behaviour of Kubernetes, which always create containers freshly and tears them down once it completes. Also you get a pretty good replacement for `docker-compose`
+
+#### 3.2.3.2 Building images using Podman and Kubernetes YAML files
+
+`podman play kube --build` option allows to execute `podman build` internally and generate the image on demand rather than forcing you to use a container registry.
+
+1. `podamn pod rm --all --force` & `podman rm --all --force` to remove all pods and containers.
+   You should already have a Contianerfile prepared using following commmands as such.
+
+```
+cat > ./Containerfile << _EOF
+FROM ubi8-init
+RUN dnf -y install httpd; dnf -y clean all
+RUN systemctl enable httpd.service
+_EOF
+```
+
+2. `podamn build -t mysystemd .` to rebuild the `my-systemd` iamge.
+3. `podman create --rm -p 8080:80 --name myapp -v ./html:/var/www/html:Z mysystemd` to create the container with ./html directory mounted into container.
+4. `podman generate kube myapp > myapp2.yaml` to generate the Kubernetes YAML file
+5. `podman pod rm --all --force` and `podman rm --all -force` to restore the environment back to fresh state.
+6. `podman play kube --build` command requires subdirectories matching the image names to exist for images to build.
+7. `mkdir mysystemd` `mv Contianerfile mysystemd/` to matach the context format for build.
+8. `podman play kube myapp2.yaml --build` will rebuild the container image and launch the Pod and containers.
+
+You can share the YAML file and the mysystemd directory with others, and they can build and launch the application all with Podman.
+
+### 3.2.4 Running Podman within a container
+
+#### 3.2.4.1 Running Podman with a Podman container
+
+First choice, run a rootful Podman within a rootless container.
+
+`podman run --privileged quay.io/podman/stable podman version`
+
+Second choice, run a rootless Podman within a rootless container.
+
+`podman run --user podman quay.io/podman/stable podman version`
+
+Third choice, the safest one to lock the container down.
+
+`podman run --cap-drop=all --cap-add CAP_SETUID,CAP_SETGID --user podman quay.io/podman/stable podman version`
+
+#### 3.2.4.2 Running Podman within a Kubernetes pod
+
+I wil just paste the rootful and rootless YAML file here.
+
+Rootful YAML:
+
+```
+apiVersion: v1
+kind: Pod
+metadata:
+name: podman-priv
+spec:
+containers:
+- name: priv
+image: quay.io/podman/stable
+args:
+- podman
+- version
+securityContext:
+privileged: true
+```
+
+Rootless YAML:
+
+```
+apiVersion: v1
+kind: Pod
+metadata:
+name: podman-rootless
+spec:
+containers:
+- name: rootless
+image: quay.io/podman/stable
+args:
+- podman
+- version
+securityContext:
+capabilities:
+add:
+- "SETUID"
+- "SETGID"
+runAsUser: 1000
+'''
+
 ```
