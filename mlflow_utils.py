@@ -10,7 +10,7 @@ import pandas as pd
 from mlflow.models import infer_signature
 from mlflow.tracking import MlflowClient
 
-MLFLOW_TRACKING_URI = "http://172.22.230.27:5000"
+MLFLOW_TRACKING_URI = ""
 
 
 def configure_mlflow(tracking_uri: str = MLFLOW_TRACKING_URI) -> None:
