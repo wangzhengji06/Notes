@@ -132,3 +132,539 @@ We can manually create an event loop using `asyncio.new_event_loop`
 ### Debug Mode
 
 `asyncio.run(coroutine(), debug=True)`
+
+## A first asyncio application
+
+### Working with blocking socket
+
+The code below shows a most basic server socket app to listen to connections from client side.
+
+```Python
+import socket
+
+# AF_INET means hostname + port will be the format to interact with, SOCK_STREAM means TCP
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+# Allow use to reuse the port
+server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+server_address = ('127.0.0.1', 8000)
+server_socket.bind(server_address)
+server_socket.listen()
+
+# This tells our socket to listen for the incoming connections, the oprations will block
+connection, client_address = server_socket.accept()
+print(f'I got a connection from {client_address}!')
+```
+
+### Reading and Writing data to and from a socket
+
+The code below shows a blocking server that can read and write to socket for multiple client connections
+
+However, when a first client get the connection, before it send anything to client, the second client cannot connect.
+
+This is because `accept` and `recv` methods block until they recieve data.
+
+```Python
+import socket
+
+# AF_INET means hostname + port will be the format to interact with, SOCK_STREAM means TCP
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+# Allow use to reuse the port
+server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+server_address = ('127.0.0.1', 8000)
+server_socket.bind(server_address)
+server_socket.listen()
+
+connections = []
+
+
+try:
+    while True:
+        connection, client_address = server_socket.accept()
+        print(f'I got a connection from {client_address}!')
+        connections.append(connection)
+        for connection in connections:
+            buffer = b''
+            while buffer[-2:] != b'\r\n':
+                data = connection.recv(2)
+                if not data:
+                    break
+                else:
+                    print(f'I got data: {data}!')
+                    buffer = buffer + data
+            print(f"All the data is: {buffer}")
+
+            connection.send(buffer)
+finally:
+     server_socket.close()
+```
+
+### Working with non-blocking sockets
+
+A first trail of creating non-blocking sockets by making it nonblocking socket with try and catch when no connection is waiting.
+
+```Python
+import socket
+
+# AF_INET means hostname + port will be the format to interact with, SOCK_STREAM means TCP
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+# Allow use to reuse the port
+server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+server_address = ('127.0.0.1', 8000)
+server_socket.bind(server_address)
+server_socket.listen()
+server_socket.setblocking(False)
+
+connections = []
+
+
+try:
+    while True:
+        try:
+            connection, client_address = server_socket.accept()
+            print(f'I got a connection from {client_address}!')
+            connections.append(connection)
+            connection.setblocking(False)
+        except BlockingIOError:
+            pass
+
+        for connection in connections:
+            try:
+                buffer = b''
+                while buffer[-2:] != b'\r\n':
+                    data = connection.recv(2)
+                    if not data:
+                        break
+                    else:
+                        print(f'I got data: {data}!')
+                        buffer = buffer + data
+                print(f"All the data is: {buffer}")
+                connection.send(buffer)
+            except BlockingIOError:
+                pass
+finally:
+     server_socket.close()
+
+
+```
+
+### Using the selectors module to build a socket event loop
+
+The previous code will keep cpu at 100%.
+
+But the following code will use very little cpu, because it monitors on a hardware level.
+
+```Python
+import selectors
+import socket
+from selectors import SelectorKey
+from typing import List, Tuple
+
+selector = selectors.DefaultSelector()
+
+server_socket = socket.socket()
+server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+server_address = ('127.0.0.1', 8000)
+server_socket.setblocking(False)
+server_socket.bind(server_address)
+server_socket.listen()
+
+selector.register(server_socket, selectors.EVENT_READ)
+
+while True:
+    events: List[Tuple[SelectorKey, int]] = selector.select(timeout=1)
+
+    if len(events) == 0:
+        print("No events, wait a bit more")
+
+    for event, _ in events:
+        event_socket = event.fileobj
+
+        if event_socket == server_socket:
+            connection, address = server_socket.accept()
+            connection.setblocking(False)
+            print(f"I got a connection from {address}")
+            selector.register(connection, selectors.EVENT_READ)
+        else:
+            data = event_socket.recv(1024)
+            print(f"I got some data: {data}")
+            event_socket.send(data)
+
+```
+
+This scenario shares some similarity with asyncio event loop.
+
+Each iteration of event loop is triggered by 1. A socket event happening 2. A timeout is triggered.
+
+For asyncio, it is the same, either the coroutines is completed, or they hit the next await event.
+
+```Python
+
+ready = []      # coroutines ready to run
+paused = {}     # coroutine -> what it is waiting for
+timers = []     # (wake_time, coroutine)
+selector = Selector()
+
+while ready or paused:
+    new_ready = []
+
+    # 1. Run all ready coroutines
+    for coro in ready:
+        try:
+            wait = coro.send(None)   # run until next await
+        except StopIteration:
+            # coroutine finished → remove it permanently
+            continue
+
+        # 2. Coroutine yielded control (hit await)
+        if wait.type == "SOCKET":
+            selector.register(wait.socket)
+            paused[coro] = wait
+
+        elif wait.type == "SLEEP":
+            timers.append((current_time() + wait.seconds, coro))
+            paused[coro] = wait
+
+    ready = []
+
+    # 3. Determine how long we can sleep
+    timeout = time_until_next_timer(timers)
+
+    # 4. Wait for socket events or timeout
+    events = selector.select(timeout)
+
+    # 5. Wake coroutines waiting on socket events
+    for event in events:
+        coro = paused.pop(event.coro)
+        new_ready.append(coro)
+
+    # 6. Wake coroutines whose timers expired
+    for wake_time, coro in expired_timers(timers):
+        paused.pop(coro)
+        new_ready.append(coro)
+
+    ready = new_ready
+
+```
+
+- An event loop runs continuously and manages the execution of coroutines.
+
+- Coroutines run until they reach an await, at which point they yield control back to the event loop.
+
+- When a coroutine is suspended:
+  1.it is paused, not removed 2.the event loop records what it is waiting for (socket readiness or a timer)
+
+- The event loop uses an OS-level selector to efficiently wait for socket events.
+
+- Time-based waits (e.g. asyncio.sleep) are handled using timers, which determine how long the event loop can sleep.
+
+- The event loop sleeps until: 1. a registered socket becomes ready, or 2. the next timer expires
+
+- When a wait condition is satisfied, the corresponding coroutine is moved back to the ready queue.
+
+- Coroutines that finish execution are removed permanently from the event loop.
+
+- Only one coroutine runs at a time; concurrency is achieved through cooperative multitasking via await.
+
+
+### Using asyncio event loop to ease things up
+
+Using selector might be too low-level in a lot of sutations. 
+
+There are three corotuines we want to work with: sock_accept, sock_recv, sock_sendall.
+
+sock_accept: return a tuple of scoket connection and a client address
+
+sock_recv: await until a socket has bytes we can process
+
+sock_sendall: takes in both a socket and data we want to send and wait until the data we want to send to a socket has been sent and will return None on success
+
+
+```Python
+import asyncio
+import socket
+from asyncio import AbstractEventLoop
+
+async def echo(connection: socket, loop: AbstractEventLoop) -> None:
+    while data := await loop.sock_recv(connection, 1024):
+        await loop.sock_sendall(connection, data)
+
+
+async def listen_for_connection(server_socket: socket,
+                               loop: AbstractEventLoop):
+    while True:
+        connection, address = await loop.sock_accept(server_socket)
+        connection.setblocking(False)
+        print(f"Got a connection from {address}")
+        asyncio.create_task(echo(connection, loop))
+
+
+async def main():
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+    server_address = ('127.0.0.1', 8000)
+    server_socket.setblocking(False)
+    server_socket.bind(server_address)
+    server_socket.listen()
+
+    await listen_for_connection(server_socket, asyncio.get_event_loop())
+
+asyncio.run(main())
+
+
+```
+
+The key idea of choosing betweeing a coroutine and task is: 
+Use a coroutine when work is sequential and owned by its caller; wrap a coroutine in a task when it needs to run concurrently and independently.
+
+
+### Handling Error
+
+```Python
+import asyncio
+import logging
+import signal
+import socket
+from asyncio import AbstractEventLoop
+from typing import List
+
+logging.basicConfig(level=logging.INFO)
+
+echo_tasks: List[asyncio.Task] = []
+
+
+async def echo(connection: socket.socket, loop: AbstractEventLoop) -> None:
+    try:
+        while True:
+            data = await loop.sock_recv(connection, 1024)
+            if not data:
+                break
+
+            print("got data!")
+
+            if data == b"boom\r\n":
+                raise Exception("Unexpected network error")
+
+            await loop.sock_sendall(connection, data)
+
+    except Exception as ex:
+        # Logs traceback immediately; the exception won't be "lost" inside the task.
+        logging.exception("echo failed: %s", ex)
+
+    finally:
+        connection.close()
+
+
+async def connection_listener(server_socket: socket.socket, loop: AbstractEventLoop) -> None:
+    while True:
+        connection, address = await loop.sock_accept(server_socket)
+        connection.setblocking(False)
+        print(f"Got a connection from {address}")
+
+        task = asyncio.create_task(echo(connection, loop))
+        echo_tasks.append(task)
+
+
+class GracefulExit(SystemExit):
+    pass
+
+
+def shutdown() -> None:
+    raise GracefulExit()
+
+
+async def close_echo_tasks(tasks: List[asyncio.Task]) -> None:
+    # Give each task up to 2 seconds to finish; if it doesn't, cancel it.
+    waiters = [asyncio.wait_for(t, timeout=2) for t in tasks]
+
+    for waiter in waiters:
+        try:
+            await waiter
+        except asyncio.TimeoutError:
+            # Expected: some echo loops might still be blocked waiting for recv
+            pass
+        except Exception:
+            # If echo() didn't catch/log for some reason, don't crash shutdown
+            logging.exception("Task failed during shutdown")
+
+    # Ensure any still-pending tasks are cancelled
+    for t in tasks:
+        if not t.done():
+            t.cancel()
+
+    # Drain cancellations
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def main(loop: asyncio.AbstractEventLoop) -> None:
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+    server_address = ("127.0.0.1", 8000)
+    server_socket.setblocking(False)
+    server_socket.bind(server_address)
+    server_socket.listen()
+
+    for signame in ("SIGINT", "SIGTERM"):
+        loop.add_signal_handler(getattr(signal, signame), shutdown)
+
+    await connection_listener(server_socket, loop)
+
+
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+
+try:
+    loop.run_until_complete(main(loop))
+except GracefulExit:
+    loop.run_until_complete(close_echo_tasks(echo_tasks))
+finally:
+    loop.close()
+async def echo(connection: socket.socket, loop: AbstractEventLoop) -> None:
+    try:
+        while True:
+            data = await loop.sock_recv(connection, 1024)
+            if not data:
+                break
+            print("got data!")
+            if data == b"boom\r\n":
+                raise Exception("Unexpected network error")
+            await loop.sock_sendall(connection, data)
+
+    except Exception as ex:
+        # Logs the full traceback immediately, inside the task
+        logging.exception("echo task crashed: %s", ex)
+
+    finally:
+        connection.close())
+
+```
+
+The tricky part here is that if you just create tasks in a coroutine and that task actually has an error, you will not know that immediately. This is because asyncio.create_task() schedules the coroutine to run independently, and any exception raised inside that task is captured and stored inside the Task object, not propagated to the code that created it.
+
+An exception from a task is only re-raised when the task is awaited (or when its result/exception is explicitly retrieved). If the task is never awaited, the exception does not bubble up to the caller, and asyncio may only report it later—or not at all—depending on garbage collection and program shutdown timing.
+
+As a result, it is better to create a try / except block inside the task itself so that errors are handled or logged at the point where they occur, ensuring failures are visible even when the task is running in the background and is never awaited.
+
+
+### Shutdown Gracefully
+
+```Python
+import asyncio
+import logging
+import signal
+import socket
+from asyncio import AbstractEventLoop
+from typing import List
+
+logging.basicConfig(level=logging.INFO)
+
+echo_tasks: List[asyncio.Task] = []
+
+
+async def echo(connection: socket.socket, loop: AbstractEventLoop) -> None:
+    try:
+        while True:
+            data = await loop.sock_recv(connection, 1024)
+            if not data:
+                break
+
+            print("got data!")
+
+            if data == b"boom\r\n":
+                raise Exception("Unexpected network error")
+
+            await loop.sock_sendall(connection, data)
+
+    except Exception as ex:
+        # Logs traceback immediately; the exception won't be "lost" inside the task.
+        logging.exception("echo failed: %s", ex)
+
+    finally:
+        connection.close()
+
+
+async def connection_listener(server_socket: socket.socket, loop: AbstractEventLoop) -> None:
+    while True:
+        connection, address = await loop.sock_accept(server_socket)
+        connection.setblocking(False)
+        print(f"Got a connection from {address}")
+
+        task = asyncio.create_task(echo(connection, loop))
+        echo_tasks.append(task)
+
+
+class GracefulExit(SystemExit):
+    pass
+
+
+def shutdown() -> None:
+    raise GracefulExit()
+
+
+async def close_echo_tasks(tasks: List[asyncio.Task]) -> None:
+    # Give each task up to 2 seconds to finish; if it doesn't, cancel it.
+    waiters = [asyncio.wait_for(t, timeout=2) for t in tasks]
+
+    for waiter in waiters:
+        try:
+            await waiter
+        except asyncio.TimeoutError:
+            # Expected: some echo loops might still be blocked waiting for recv
+            pass
+        except Exception:
+            # If echo() didn't catch/log for some reason, don't crash shutdown
+            logging.exception("Task failed during shutdown")
+
+    # Ensure any still-pending tasks are cancelled
+    for t in tasks:
+        if not t.done():
+            t.cancel()
+
+    # Drain cancellations
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def main(loop: asyncio.AbstractEventLoop) -> None:
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+    server_address = ("127.0.0.1", 8000)
+    server_socket.setblocking(False)
+    server_socket.bind(server_address)
+    server_socket.listen()
+
+    for signame in ("SIGINT", "SIGTERM"):
+        loop.add_signal_handler(getattr(signal, signame), shutdown)
+
+    await connection_listener(server_socket, loop)
+
+
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+
+try:
+    loop.run_until_complete(main(loop))
+except GracefulExit:
+    loop.run_until_complete(close_echo_tasks(echo_tasks))
+finally:
+    loop.close()
+
+```
+
+
+This shutdown gracefully logic is really really hard, I think the best thing to summarize it is: Shutdown must interrupt the main coroutine, not run alongside it.
+
+To clean up the async task by canceling them, while also interrupt the loop, 
+
+Also here the reason why we do not use asyncio.run() is because asyncio.run() will aggresively cancel all the tasks after finished(This is like its trait)
+
+
+
