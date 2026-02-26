@@ -372,10 +372,9 @@ while ready or paused:
 
 - Only one coroutine runs at a time; concurrency is achieved through cooperative multitasking via await.
 
-
 ### Using asyncio event loop to ease things up
 
-Using selector might be too low-level in a lot of sutations. 
+Using selector might be too low-level in a lot of sutations.
 
 There are three corotuines we want to work with: sock_accept, sock_recv, sock_sendall.
 
@@ -384,7 +383,6 @@ sock_accept: return a tuple of scoket connection and a client address
 sock_recv: await until a socket has bytes we can process
 
 sock_sendall: takes in both a socket and data we want to send and wait until the data we want to send to a socket has been sent and will return None on success
-
 
 ```Python
 import asyncio
@@ -421,9 +419,8 @@ asyncio.run(main())
 
 ```
 
-The key idea of choosing betweeing a coroutine and task is: 
+The key idea of choosing betweeing a coroutine and task is:
 Use a coroutine when work is sequential and owned by its caller; wrap a coroutine in a task when it needs to run concurrently and independently.
-
 
 ### Handling Error
 
@@ -553,7 +550,6 @@ An exception from a task is only re-raised when the task is awaited (or when its
 
 As a result, it is better to create a try / except block inside the task itself so that errors are handled or logged at the point where they occur, ensuring failures are visible even when the task is running in the background and is never awaited.
 
-
 ### Shutdown Gracefully
 
 ```Python
@@ -659,12 +655,400 @@ finally:
 
 ```
 
-
 This shutdown gracefully logic is really really hard, I think the best thing to summarize it is: Shutdown must interrupt the main coroutine, not run alongside it.
 
-To clean up the async task by canceling them, while also interrupt the loop, 
+To clean up the async task by canceling them, while also interrupt the loop,
 
 Also here the reason why we do not use asyncio.run() is because asyncio.run() will aggresively cancel all the tasks after finished(This is like its trait)
 
+## 3. Concurrent Web requests
+
+### Asynchronous context managers
+
+Asynchronous context managers are classes that implement two special coroutine methods, `__aenter__`, and `__aexit__`, which asynchrnously requires and closes the resources.
+
+```Python
+import asyncio
+import socket
+from types import TracebackType
+from typing import Optional, Type
 
 
+class ConnectedSocket:
+
+    def __init__(self, server_socket):
+        self._connection = None
+        self._server_socket = server_socket
+
+    async def __aenter__(self):
+        print("Entering context manager, waiting for connection")
+        loop = asyncio.get_event_loop()
+        connection, address = await loop.sock_accept(self._server_socket)
+        self._connection = connection
+        print('Accepted a connection')
+        return self._connection
+
+    async def __aexit__(self, exc_type: Optional[BaseException], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]):
+        print('Exiting context manager')
+        self._connection.close()
+        print('Closed Connection')
+
+
+async def main():
+    loop = asyncio.get_event_loop()
+    server_socket = socket.socket()
+    server_socket.setsocket(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server_address = ('127.0.0.1', 8000)
+    server_socket.setblockng(False)
+    server_socket.bind(server_address)
+    server_socket.listen()
+
+    async with ConnectedSocket(server_socket) as connection:
+        data = await loop.sock_recv(connection, 1024)
+        print(data)
+
+asyncio.run(main)
+```
+
+### Making web requests with aiohttp
+
+Aiohttp and web requests in general employ the concept of session. Inside the session, you can save the cookie, and keep many connections open. Because connection is resource intensive, creating a reusable pool of connections is the common practice.
+
+```Python
+import asyncio
+import aiohttp
+from aiohttp import ClientSession
+from util import async_timed
+
+
+@async_timed()
+async def fetch_status(session: ClientSession, url: str) -> int:
+    async with session.get(url) as result:
+        return result.status
+
+@async_timed()
+async def main():
+    async with aiohttp.ClientSession() as session:
+        url = 'https://www.example.com'
+        status = await fetch_status(session, url)
+        print(f"status for {url} was {status}.")
+
+asyncio.run(main())
+
+```
+
+ClientSession will create a default maximum of 100 connections by default.
+
+The below code uses the aiohttp's builtin timeout function.
+
+First, on client level, it sets the total timeout to be 1s and connection to be 0.1s, then in the `fetch_status`, it overwrites the timeout to be 0.01.
+
+```Python
+import asyncio
+import aiohttp
+from aiohttp import ClientSession
+
+async def fetch_status(session: ClientSession, url: str) -> int:
+    ten_millis = aiohttp.ClientTimeout(total=.01)
+    async with session.get(url, timeout=ten_millis) as result:
+        return result.status
+
+async def main():
+    session_timeout = aiohttp.ClientTimeout(total=1, connect=.1)
+    async with aiohttp.ClientSession(timeout=session_timeout) as session:
+        await fetch_session(session, "https://www.example.com")
+
+asyncio.run(main())
+```
+
+### Running tasks concurrently, revisited
+
+Below is a way of creating task and executing them concurrently using list comprehension
+
+If one task throws an exception, it is actually going to halt the main process (You did not specify the try and except error for the task unit), which is not favourable.
+
+```Python
+import asyncio
+from util import async_timed, delay
+
+@async_timed()
+async def main() -> None:
+    delay_times = [3, 3, 3]
+    tasks = [asyncio.create_task(delay(seconds)) for seconds in delay_times]
+    [await task for task in tasks]
+
+```
+
+### Running requests concurretnly with gather
+
+`asyncio.gather` will automatically takes in a sequence of awaitables, and if it is a coroutine, it will automatically wrap it in a task.
+
+1. Each coroutine is automatically wrapped into a Task
+2. All tasks are scheduled immediately
+3. gather waits for all of them to finish
+
+```Python
+import asyncio
+import aiohttp
+from aiohttp import ClientSession
+from chapter_04 import fetch_status
+from util import async_timed
+
+@async_timed()
+async def main():
+    async with aiohttp.ClientSession() as session:
+        urls = ['https://example.com' for _ in range(1000)]
+        requests = [fetch_status(session, url) for url in urls]
+        status_codes = await asyncio.gather(*requests)
+        print(status_codes)
+
+asyncio.run(main())
+
+```
+
+Also, the `asyncio.gather` guarantees that the awaitable we pass in will complete in a deterministic order. For example, the result of the code below would acutally be [3, 1].
+
+```Python
+import asyncio
+from util import delay
+
+async def main():
+    results = await asyncio.gather(delay(3), delay(1))
+    print(results)
+
+asyncio.run(main())
+
+```
+
+### gather with exception handling
+
+By default, the exception wrapped in gather will be thrown after everything ended. A way to explicitly handles it is to ask the asyncio to return the Exception also.
+
+```Python
+from util import async_timed
+import asyncio
+import aiohttp
+from chapter_04 import fetch_status
+
+
+@async_timed()
+async def main():
+    async with aiohttp.ClientSession() as session:
+        urls = ['https://example.com', 'python://example.com']
+        tasks = [fetch_status(session, url) for url in urls]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        exceptions = [res for res in results if isinstance(res, Exception)]
+        successful_results = [res for res in results if not isinstance(res,Exception)]
+        print(f'All results: {results}')
+        print(f'Finished successfully: {successful_results}')
+        print(f'Threw exceptions: {exceptions}')
+
+
+asyncio.run(main())
+
+```
+
+Gather has the following two weak points:
+
+1. Not easy to cancel the tasks. Why? because you wrap it and hand it over to gather. Now you cannot easily cancel it.
+2. Gather will wait for all awaitable(tasks) to finish before output something.
+
+### Processing requests as they complete
+
+To counter the second problem, we can use as_completed api. This allows some task to finish and output first.
+
+```Python
+
+import asyncio
+import aiohttp
+from aiohttp import ClientSession
+from util import async_timed
+
+async def fetch_status(session: ClientSession, url: str, delay: int = 0) -> int:
+    await asyncio.sleep(delay)
+    async with session.get(url) as result:
+        return result.status
+
+@async_timed()
+async def main():
+    async with aiohttp.ClientSession() as session:
+        fetchers = [fetch_status(session, 'https://www.example.com', 1),
+                    fetch_status(session, 'https://www.example.com', 1),
+                    fetch_status(session, 'https://www.example.com', 10)]
+
+        for finished_task in asyncio.as_completed(fetchers):
+            print(await finished_task)
+
+
+asyncio.run(main())
+
+```
+
+To counter the first problem, we can use timeout, if the overall as_completed has taken longer than the timeout, each awaitable in the iterator will throw TimeoutException.
+
+```Python
+
+import asyncio
+import aiohttp
+from aiohttp import ClientSession
+from util import async_timed
+
+async def fetch_status(session: ClientSession, url: str, delay: int = 0) -> int:
+    await asyncio.sleep(delay)
+    async with session.get(url) as result:
+        return result.status
+
+@async_timed()
+async def main():
+    async with aiohttp.ClientSession() as session:
+        fetchers = [fetch_status(session, 'https://www.example.com', 1),
+                    fetch_status(session, 'https://www.example.com', 1),
+                    fetch_status(session, 'https://www.example.com', 10)]
+
+        for finished_task in asyncio.as_completed(fetchers):
+            print(await finished_task)
+
+
+asyncio.run(main())
+
+```
+
+However, behind the secene, as_completed with timeout does the following: the task that got TimeoutException is still running in the background. Also, there is no way telling which tasks got finished, you can just saw the result.
+
+We still need better control.
+
+### Finer-grained control with wait
+
+By default, `asyncio.wait` works like `asyncio.gather`. The following code will have no pending tasks.
+
+```Python
+
+import asyncio
+import aiohttp
+from aiohttp import ClientSession
+from util import async_timed
+from chapter_04 import fetch_status
+
+@async_timed()
+async def main():
+    async with aiohttp.ClientSession() as session:
+        fetchers = \
+        [asyncio.create_task(fetch_status(session, 'https://example.com')),
+         asyncio.create_task(fetch_status(session, 'https://example.com'))]
+        done, pending = await asyncio.wait(fetchers)
+
+        print(f"Done task count: {len(done)}")
+        print(f"Pending task count: {len(pending)}")
+
+        for done_task in done:
+            result = await done_task
+            print(result)
+
+asyncio.run(main())
+```
+
+And also like gather, it will not throw exception until everything is run. To handle the exception, you should handle like the following:
+
+```Python
+import asyncio
+import aiohttp
+from aiohttp import ClientSession
+from util import async_timed
+from chapter_04 import fetch_status
+import logging
+
+@async_timed()
+async def main():
+    async with aiohttp.ClientSession() as session:
+        fetchers = \
+        [asyncio.create_task(fetch_status(session, 'https://example.com')),
+         asyncio.create_task(fetch_status(session, 'python://example.com'))]
+        done, pending = await asyncio.wait(fetchers)
+
+        print(f"Done task count: {len(done)}")
+        print(f"Pending task count: {len(pending)}")
+
+        for done_task in done:
+            if done_task.exception() is None:
+                print(done_task.result())
+            else:
+                logging.error("Request got an exception",
+                             exc_info=done_task.exception())
+
+
+asyncio.run(main())
+
+
+```
+
+This, is however problematic in the same way as `asyncio.gather`, because if you have on exception, you might want to stop all the tasks but you cannot.
+
+In this scenario, you can use the `FIRST_EXCEPTION` option. This will make the `asycio.wait` to immediately return if an exception is raised.
+
+The done set will consist of all the completed tasks, while the pending set will consist of still running tasks.
+
+```Python
+
+import asyncio
+import aiohttp
+from aiohttp import ClientSession
+from util import async_timed
+from chapter_04 import fetch_status
+import logging
+
+@async_timed()
+async def main():
+    async with aiohttp.ClientSession() as session:
+        fetchers = \
+        [asyncio.create_task(fetch_status(session, 'python://example.com')),
+         asyncio.create_task(fetch_status(session, 'https://example.com', 3)),
+         asyncio.create_task(fetch_status(session, 'https://example.com', 3))]
+
+        done, pending = await asyncio.wait(fetchers, return_when=asyncio.FIRST_EXCEPTION)
+
+        print(f"Done task count: {len(done)}")
+        print(f"Pending task count: {len(pending)}")
+
+        for done_task in done:
+            if done_task.exception() is None:
+                print(done_task.result())
+            else:
+                logging.error("Request got an exception",
+                             exc_info=done_task.exception())
+
+        for pending_task in pending:
+            pending_task.cancel()
+
+
+asyncio.run(main())
+
+```
+
+But this is still problematic, what if we do not want to wait for all coroutines to complete? We can use `return_when=asyncio.FIRST_COMPLETED`, and some simple loop logic.
+
+```Python
+import asyncio
+import aiohttp
+from chapter_04 import fetch_status
+from util import async_timed
+
+@async_timed()
+async def main():
+    async with aiohttp.ClientSession() as session:
+        url = 'https://www.example.com'
+        pending = [asyncio.create_task(fetch_status(session, url)),
+                   asyncio.create_task(fetch_status(session, url)),
+                   asyncio.create_task(fetch_status(session, url))]
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            print(f'Done task count: {len(done)}')
+            print(f'Pending task count: {len(pending)}')
+            for done_task in done:
+                print(await done_task)
+asyncio.run(main())
+```
+
+**Important thing here, you can use timeout in `asyncio.wait`, and it is going to return after that timeout, thats it, you still need to manually cancel those tasks.**
+
+**Also the best pracitice here is to always use wrapped task for `asyncio.wait`**
