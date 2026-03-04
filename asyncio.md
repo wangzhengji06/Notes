@@ -1052,3 +1052,474 @@ asyncio.run(main())
 **Important thing here, you can use timeout in `asyncio.wait`, and it is going to return after that timeout, thats it, you still need to manually cancel those tasks.**
 
 **Also the best pracitice here is to always use wrapped task for `asyncio.wait`**
+
+## Non-blocking database drivers
+
+### Execute query with asyncpg
+
+Use docker to deploy a postgre server, we can use `execute` and `fetch` to execute the sql caluse, or get asyncpg Record objects back.
+
+In the code below, we create sql database by executing the codes, and since the `execute` itself is a coroutine, we will have to await it.
+Notice that this code snippet is synchronous.
+
+```Python
+
+import asyncio
+
+import asyncpg
+
+CREATE_BRAND_TABLE = """
+CREATE TABLE IF NOT EXISTS brand(
+brand_id SERIAL PRIMARY KEY,
+brand_name TEXT NOT NULL
+);"""
+CREATE_PRODUCT_TABLE = """
+CREATE TABLE IF NOT EXISTS product(
+product_id SERIAL PRIMARY KEY,
+product_name TEXT NOT NULL,
+brand_id INT NOT NULL,
+FOREIGN KEY (brand_id) REFERENCES brand(brand_id)
+);"""
+CREATE_PRODUCT_COLOR_TABLE = """
+CREATE TABLE IF NOT EXISTS product_color(
+product_color_id SERIAL PRIMARY KEY,
+product_color_name TEXT NOT NULL
+);"""
+CREATE_PRODUCT_SIZE_TABLE = """
+CREATE TABLE IF NOT EXISTS product_size(
+product_size_id SERIAL PRIMARY KEY,
+product_size_name TEXT NOT NULL
+);"""
+CREATE_SKU_TABLE = """
+CREATE TABLE IF NOT EXISTS sku(
+sku_id SERIAL PRIMARY KEY,
+product_id INT NOT NULL,
+product_size_id INT NOT NULL,
+product_color_id INT NOT NULL,
+FOREIGN KEY (product_id)
+REFERENCES product(product_id),
+FOREIGN KEY (product_size_id)
+REFERENCES product_size(product_size_id),
+FOREIGN KEY (product_color_id)
+REFERENCES product_color(product_color_id)
+);"""
+COLOR_INSERT = """
+INSERT INTO product_color VALUES(1, 'Blue');
+INSERT INTO product_color VALUES(2, 'Black');
+"""
+SIZE_INSERT = """
+INSERT INTO product_size VALUES(1, 'Small');
+INSERT INTO product_size VALUES(2, 'Medium');
+INSERT INTO product_size VALUES(3, 'Large');
+"""
+
+
+async def main():
+    connection = await asyncpg.connect(
+        host="127.0.0.1",
+        port=5432,
+        user="postgres",
+        database="products",
+        password="password",
+    )
+    statements = [
+        CREATE_BRAND_TABLE,
+        CREATE_PRODUCT_TABLE,
+        CREATE_PRODUCT_COLOR_TABLE,
+        CREATE_PRODUCT_SIZE_TABLE,
+        CREATE_SKU_TABLE,
+        SIZE_INSERT,
+        COLOR_INSERT,
+    ]
+
+    print("Creating the product database...")
+    for statement in statements:
+        status = await connection.execute(statement)
+        print(status)
+    print("Finished creating the product database!")
+    await connection.close()
+
+
+asyncio.run(main())
+```
+
+Similarly, we can await `fetch`, which by itself is also a coroutine.
+
+```Python
+
+import asyncio
+from typing import List
+
+import asyncpg
+from asyncpg import Record
+
+
+async def main():
+    connection = await asyncpg.connect(
+        host="127.0.0.1",
+        port=5432,
+        user="postgres",
+        database="products",
+        password="password",
+    )
+    await connection.execute("INSERT INTO brand VALUES(DEFAULT, 'Levis')")
+    await connection.execute("INSERT INTO brand VALUES(DEFAULT, 'Seven')")
+
+    brand_query = "SELECT brand_id, brand_name FROM brand"
+    results: List[Record] = await connection.fetch(brand_query)
+
+    for brand in results:
+        print(f"id: {brand['brand_id']}, name: {brand['brand_name']}")
+
+    await connection.close()
+
+
+asyncio.run(main())
+```
+
+### Executing queries concurrently with connection pools
+
+You might think that using asyncio.gather would be enough, like the following code. We basically want to execute two queries concurrently
+
+```Python
+
+import asyncio
+
+import asyncpg
+
+product_query = """
+SELECT
+p.product_id,
+p.product_name,
+p.brand_id,
+s.sku_id,
+pc.product_color_name,
+ps.product_size_name
+FROM product as p
+JOIN product_color as pc on pc.product_color_id = s.product_color_id
+JOIN product_size as ps on ps.product_size_id = s.product_size_id
+WHERE p.product_id = 100"""
+
+
+async def main():
+    connection = await asyncpg.connect(
+        host="127.0.0.1",
+        port=5432,
+        user="postgres",
+        database="products",
+        password="password",
+    )
+    print("Creating the product database")
+    queries = [connection.execute(product_query), connection.execute(product_query)]
+    results = await asyncio.gather(*queries)
+    print(results)
+
+
+asyncio.run(main())
+
+```
+
+However, the above code will not work. It will return asyncpg error that another task is runnning etc. The reason is that, in SQL world, one connection means one socket connection to our database. If you want concurrent results reading, you need to create multiple connections to the database and executing one query per connection. Since establishing connections is resource expensive, caching them so we can access them when needed make sense. This is commonly know as **connection pool**.
+
+To put simply, the connection pool's size determines how many tasks(sqls) can be run concurrently at one time.
+
+```Python
+
+import asyncio
+
+import asyncpg
+
+from util import async_timed
+
+product_query = """
+select
+p.product_id,
+p.product_name,
+p.brand_id,
+s.sku_id,
+pc.product_color_name,
+ps.product_size_name
+from product as p
+join sku as s on s.product_id = p.product_id
+join product_color as pc on pc.product_color_id = s.product_color_id
+join product_size as ps on ps.product_size_id = s.product_size_id
+where p.product_id = 100"""
+
+
+async def query_proudct(pool):
+    async with pool.acquire() as connection:
+        return await connection.fetchrow(product_query)
+
+
+@async_timed()
+async def query_proudct_synchronously(pool, queries):
+    return [await query_proudct(pool) for _ in range(queries)]
+
+
+@async_timed()
+async def query_proudct_concurrently(pool, queries):
+    queries = [query_proudct(pool) for _ in range(queries)]
+    return await asyncio.gather(*queries)
+
+
+async def main():
+    async with asyncpg.create_pool(
+        host="127.0.0.1",
+        port=5432,
+        user="postgres",
+        password="password",
+        database="products",
+        min_size=6,
+        max_size=6,
+    ) as pool:
+        await query_proudct_synchronously(pool, 10000)
+        await query_proudct_concurrently(pool, 10000)
+
+
+asyncio.run(main())
+
+```
+
+In the above code, we create a pool of 6 connections. It is worth noticing that, create_pool is asynchornous context manager, we need to use async with.
+
+This task is actually a mix between cpu-bound and IO-bound, there is still room for more optimization.
+
+### Managing transactions with asyncpg
+
+The transaction can be managed using async context manager. It will automatically roll back if exception is raised, otherwise it will automatically committed.
+
+```Python
+
+import asyncio
+
+import asyncpg
+
+
+async def main():
+    connection = await asyncpg.connect(
+        host="127.0.0.1",
+        port=5432,
+        user="postgres",
+        database="products",
+        password="password",
+    )
+
+    async with connection.transaction():
+        await connection.execute("INSERT INTO brand VALUES(DEFAULT, 'brand_1')")
+        await connection.execute("INSERT INTO brand VALUES(DEFAULT, 'brand_2')")
+
+    query = """SELECT brand_name from brand
+                WHERE brand_name LIKE 'brand%'"""
+    brands = await connection.fetch(query)
+    print(brands)
+
+    await connection.close()
+
+
+asyncio.run(main())
+
+```
+
+This might be postgres-specific feature, but asyncpg allows for saving point, which means if you nested a transaction, that inner transaction got roll back, but any queries successfully excuted before it will not roll back.(Of course you need to handle the exception)
+
+```Python
+import asyncio
+import asyncpg
+import logging
+
+
+async def main():
+    connection = await asyncpg.connect(host='127.0.0.1',
+                                       port=5432,
+                                       user='postgres',
+                                       database='products',
+                                       password='password')
+    async with connection.transaction():
+        await connection.execute("INSERT INTO brand VALUES(DEFAULT, 'my_new_brand')")
+
+        try:
+            async with connection.transaction():
+                await connection.execute("INSERT INTO product_color VALUES(1, 'black')")
+        except Exception as ex:
+            logging.warning('Ignoring error inserting product color', exc_info=ex)
+
+    await connection.close()
+
+
+asyncio.run(main())
+
+```
+
+Another method might be to manage the transaction manually. we need to manually write `try, except, else` with `transaction.rollback()`, `transaction.commit()`
+Notice that there is no `transaction.close()`
+
+```Python
+
+import asyncio
+
+import asyncpg
+from asyncpg.transaction import Transaction
+
+
+async def main():
+    connection = await asyncpg.connect(
+        host="127.0.0.1",
+        port=5432,
+        user="postgres",
+        database="products",
+        password="password",
+    )
+    transaction: Transaction = connection.transaction()
+    await transaction.start()
+    try:
+        await connection.execute("INSERT INTO brand VALUES(DEFAULT, 'brand_1')")
+        await connection.execute("INSERT INTO brandVALUES(DEFAULT), 'brand_2'")
+
+    except asyncpg.PostgresError:
+        print("Rolling back...")
+        await transaction.rollback()
+    else:
+        await transaction.commit()
+
+    query = """SELECT brand_name FROM brand
+                WHERE brand_name LIKE 'brand%'"""
+
+    brands = await connection.fetch(query)
+    print(brands)
+
+    await connection.close()
+
+
+asyncio.run(main())
+
+```
+
+
+### Asynchronous generators and streaming result sets
+
+Sometimes when you execute query, you do not want to use `fetch` to just get lots of results. You might want to stream the results. This can be done using asynchrnous generators and `async for` syntax.
+
+An asynchrnous generator differs from a regular generator in that, instead of generating plain Python objects are elements, it generates coroutines that we can then await until we get a result.
+
+```Python
+import asyncio
+
+from util import async_timed, delay
+
+
+async def positive_integers_async(until: int):
+    for integer in range(1, until):
+        await delay(integer)
+        yield integer
+
+
+@async_timed()
+async def main():
+    async_generator = positive_integers_async(3)
+    print(type(async_generator))
+    async for number in async_generator:
+        print(f"Got number {number}")
+
+
+asyncio.run(main())
+
+```
+
+Using `cursor` will return an asynchrnous generator that we can use to stream results. By default, cursor prefetch 50 records at a time.
+
+```Python
+import asyncio
+import asyncpg
+
+
+async def main():
+    connection = await asyncpg.connect(host='127.0.0.1',
+                                       port=5432,
+                                       user='postgres',
+                                       database='products',
+                                       password='password')
+
+    query = 'SELECT product_id, product_name FROM product'
+    async with connection.transaction():
+        async for product in connection.cursor(query):
+            print(product)
+
+    await connection.close()
+
+
+asyncio.run(main())
+
+```
+
+Notice that in the following code, we await the cursor, becuase it is both an asynchrnous generator and a coroutine in asyncpg.
+We skip first 500 records, and fetch the next 100 products and print them each out to the console.
+
+
+```Python
+import asyncpg
+import asyncio
+
+
+async def main():
+    connection = await asyncpg.connect(host='127.0.0.1',
+                                       port=5432,
+                                       user='postgres',
+                                       database='products',
+                                       password='password')
+    async with connection.transaction():
+        query = 'SELECT product_id, product_name from product'
+        cursor = await connection.cursor(query) #A
+        await cursor.forward(500) #B
+        products = await cursor.fetch(100) #C
+        for product in products:
+            print(product)
+
+    await connection.close()
+
+
+asyncio.run(main())
+
+```
+
+
+The two methods above are pretty good, but what if we only want a certain number of records back?
+
+
+```Python
+import asyncpg
+import asyncio
+
+
+async def take(generator, to_take: int):
+    item_count = 0
+    async for item in generator:
+        if item_count > to_take - 1:
+            return
+        item_count = item_count + 1
+        yield item
+
+
+async def main():
+    connection = await asyncpg.connect(host='127.0.0.1',
+                                       port=5432,
+                                       user='postgres',
+                                       database='products',
+                                       password='password')
+    async with connection.transaction():
+        query = 'SELECT product_id, product_name from product'
+        product_generator = connection.cursor(query)
+
+        async for product in take(product_generator, 5):
+            print(product)
+
+        print('Got the first five products!')
+
+    await connection.close()
+
+
+asyncio.run(main())
+
+```
+
+
+
