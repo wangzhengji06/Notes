@@ -1394,7 +1394,6 @@ asyncio.run(main())
 
 ```
 
-
 ### Asynchronous generators and streaming result sets
 
 Sometimes when you execute query, you do not want to use `fetch` to just get lots of results. You might want to stream the results. This can be done using asynchrnous generators and `async for` syntax.
@@ -1454,7 +1453,6 @@ asyncio.run(main())
 Notice that in the following code, we await the cursor, becuase it is both an asynchrnous generator and a coroutine in asyncpg.
 We skip first 500 records, and fetch the next 100 products and print them each out to the console.
 
-
 ```Python
 import asyncpg
 import asyncio
@@ -1481,9 +1479,7 @@ asyncio.run(main())
 
 ```
 
-
 The two methods above are pretty good, but what if we only want a certain number of records back?
-
 
 ```Python
 import asyncpg
@@ -1521,5 +1517,501 @@ asyncio.run(main())
 
 ```
 
+## 6. Handling CPU-bound work
+
+As it is mentioned in Chatper 1, due to GIL in python, multithread can only benefit IO-bound code. Therefore we can use mulitprocessing library to handle cpu-bound work.
+The idea is, instead of our parent process spawning threads to parallelize things, we instead spawn subprocess to handle the work.
+Each subprocess is going to have its own GIL.
+
+```Python
+
+import time
+from multiprocessing import Process
 
 
+def count(count_to: int) -> int:
+    start = time.time()
+    counter = 0
+    while counter < count_to:
+        counter += 1
+    end = time.time()
+
+    print(f"Finished counting to {count_to} in {end - start}")
+    return counter
+
+
+if __name__ == "__main__":
+    start_time = time.time()
+
+    to_ond_hundred_million = Process(target=count, args=(100000000,))
+    to_two_hundred_million = Process(target=count, args=(200000000,))
+
+    to_ond_hundred_million.start()
+    to_two_hundred_million.start()
+
+    to_ond_hundred_million.join()
+    to_two_hundred_million.join()
+
+    end_time = time.time()
+    print(f"Completed in {end_time - start_time}")
+
+
+```
+
+Here the `start()` method can start the process immediately, and the `join()` method will block the main process until both subprocesses are done. Otherwise our program will exit almost immediately.
+
+Also the part `if __name__ == "__main__"` is actually necessary, otherwise there is a risk of others importing your code will run process unintentionally.
+
+### Process pools
+
+**Process pools** is a concept similar to **Connection pools**, in that instead of a pool of connections established to database, it is a pool of created python process.
+
+```Python
+
+from multiprocessing import Pool
+
+
+def say_hello(name: str) -> str:
+    return f"Hi there, {name}"
+
+
+if __name__ == "__main__":
+    with Pool() as process_pool:
+        hi_jeff = process_pool.apply(say_hello, args=("Jeff",))
+        hi_john = process_pool.apply(say_hello, args=("John",))
+        print(hi_jeff)
+        print(hi_john)
+```
+
+Here the apply automatically start and join the process, and we also can get back the return value. But, the appply will block until function completes, so the code is synchronous.
+
+A way to resolve it is to use `apply_sync`
+
+```Python
+
+from multiprocessing import Pool
+
+
+def say_hello(name: str) -> str:
+    return f"Hi there, {name}"
+
+
+if __name__ == "__main__":
+    with Pool() as process_pool:
+        hi_jeff = process_pool.apply_async(say_hello, args=("Jeff",))
+        hi_john = process_pool.apply_async(say_hello, args=("John",))
+        print(hi_jeff.get())
+        print(hi_john.get())
+
+
+```
+
+When we use `apply_sync`, our call starts instantly in seperate processes. When we call `get` method, our parent process will block until each process returns a value. But what if the second task finish early? Even if it finished early, we cannot get its return value immediately before the first value, that is the disadvantage here.
+
+### Using process pool executors with asyncio
+
+`concurrent.futures` module provides abstraction for us. This class defines two methods for running work asynchrnously.
+
+The first is `submit`, which will take a callable and return a Future. The second is `map`, it will take a callable and a list of arguments and implement them asynchrnously, and it will return iterators.
+
+```Python
+import time
+from concurrent.futures import ProcessPoolExecutor
+
+
+def count(count_to: int) -> int:
+    start = time.time()
+    counter = 0
+    while counter < count_to:
+        counter += 1
+    end = time.time()
+    print(f"Finished counting to {count_to} in {end - start}")
+    return counter
+
+
+if __name__ == "__main__":
+    with ProcessPoolExecutor() as process_pool:
+        numbers = [1, 3, 5, 22, 1000_000_000]
+        for result in process_pool.map(count, numbers):
+            print(result)
+```
+
+However, this method will return the value in a deterministic way, which is not as responsive as `asyncio.as_completed`
+
+What we can do is use this together with the asyncio's eventloop. `gather.run_in_executor` only takes a callable and does not allow us to supply function arguments, so we will need to use partial function application to build countdown calls with 0 arguments.
+
+```Python
+
+import asyncio
+from asyncio.events import AbstractEventLoop
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
+from typing import List
+
+
+def count(count_to: int) -> int:
+    counter = 0
+    while counter < count_to:
+        counter += 1
+    return counter
+
+
+async def main():
+    with ProcessPoolExecutor() as process_pool:
+        loop: AbstractEventLoop = asyncio.get_running_loop()
+        nums = [1, 3, 5, 22, 100_000_000]
+        calls: List[partial[int]] = [partial(count, num) for num in nums]
+        call_coros = []
+
+        for call in calls:
+            call_coros.append(loop.run_in_executor(process_pool, call))
+
+        results = await asyncio.gather(*call_coros)
+
+        for result in results:
+            print(result)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+```
+
+Here the `loop.run_in_executor` starts the running, and the `gather` method waits util every tasks is done.
+
+If we want, we can also use `as_completed` to solve the problem we talked about earlier.
+
+### Solving a problem with MapReduce using asyncio
+
+```Python
+import functools
+from typing import Dict
+
+
+def map_frequency(text: str) -> Dict[str, int]:
+    words = text.split(" ")
+    frequencies = {}
+    for word in words:
+        if word in frequencies:
+            frequencies[word] += 1
+        else:
+            frequencies[word] = 1
+
+    return frequencies
+
+
+def merge_dictionaries(first: Dict[str, int], second: Dict[str, int]) -> Dict[str, int]:
+    merged = first
+    for key in second:
+        if key in merged:
+            merged[key] = merged[key] + second[key]
+        else:
+            merged[key] = second[key]
+    return merged
+
+
+lines = [
+    "I know what I know",
+    "I know that I know",
+    "I don't know much",
+    "They don't know much",
+]
+
+mapped_results = [map_frequency(line) for line in lines]
+
+for result in mapped_results:
+    print(result)
+
+
+print(functools.reduce(merge_dictionaries, mapped_results))
+```
+
+This will be a single threaded map-reduce function....
+
+```Python
+import asyncio
+import concurrent.futures
+import functools
+import time
+from typing import Dict, List
+
+
+def partition(data: List, chunk_size: int) -> List:
+    for i in range(0, len(data), chunk_size):
+        yield data[i : i + chunk_size]
+
+
+def map_frequencies(chunk: List[str]) -> Dict[str, int]:
+    counter = {}
+    for line in chunk:
+        word, _, count, _ = line.split("\t")
+        if counter.get(word):
+            counter[word] = counter[word] + int(count)
+        else:
+            counter[word] = int(count)
+    return counter
+
+
+def merge_dictionaries(first: Dict[str, int], second: Dict[str, int]) -> Dict[str, int]:
+    merged = first
+    for key in second:
+        if key in merged:
+            merged[key] = merged[key] + second[key]
+        else:
+            merged[key] = second[key]
+    return merged
+
+
+async def reduce(loop, pool, counters, chunk_size) -> Dict[str, int]:
+    chunks: List[List[Dict]] = list(partition(counters, chunk_size))
+    reducers = []
+    while len(chunks[0]) > 1:
+        for chunk in chunks:
+            reducer = functools.partial(functools.reduce, merge_dictionaries, chunk)
+            reducers.append(loop.run_in_executor(pool, reducer))
+        reducer_chunks = await asyncio.gather(*reducers)
+        chunks = list(partition(reducer_chunks, chunk_size))
+        reducers.clear()
+    return chunks[0][0]
+
+
+async def main(partition_size: int):
+    with open("", encoding="urf-8") as f:
+        contents = f.readlines()
+        loop = asyncio.get_running_loop()
+        tasks = []
+        start = time.time()
+        with concurrent.futures.ProcessPoolExecutor() as pool:
+            for chunk in partition(contents, partition_size):
+                tasks.append(
+                    loop.run_in_executor(
+                        pool, functools.partial(map_frequencies, chunk)
+                    )
+                )
+            intermediate_results = await asyncio.gather(*tasks)
+            final_result = await reduce(loop, pool, intermediate_results, 500)
+
+            print(f"Aardvark has appeared {final_result['Aardvark']} times.")
+            end = time.time()
+            print(f"MapReduce took: {(end - start):.4f} seconds")
+
+
+if __name__ == "__main__":
+    asyncio.run(main(partition_size=60000))
+
+```
+
+Now this will be a good example of using multiprocess MapReduce. We calculate the dictionary parallely, we calculate the final sum also parallely. Something worth revisiting in the future for sure.
+
+### Shared data and locks
+
+Each process has its own memory. However, in certain cases, shared state might be needed, for example, shared counter.
+
+multiprocessing supports two kinds of shared data: values and array.
+
+```Python
+
+from multiprocessing import Array, Process, Value
+
+
+def increment_value(shared_int: Value):
+    shared_int.value = shared_int.value + 1
+
+
+def increment_array(shared_array: Array):
+    for index, integer in enumerate(shared_array):
+        shared_array[index] = integer + 1
+
+
+if __name__ == "__main__":
+    integer = Value("i", 0)
+    integer_array = Array("i", [0, 0])
+
+    procs = [
+        Process(target=increment_value, args=(integer,)),
+        Process(target=increment_array, args=(integer_array,)),
+    ]
+
+    [p.start() for p in procs]
+    [p.join() for p in procs]
+
+    print(integer.value)
+    print(integer_array[:])
+
+```
+
+This code works fine becasue each process is visiting different data object.
+
+However, if we are visitng the same data piece, we migh encounter **race-condition**. A race condition occurs when the outcome of a set of operations is dependent on which operation ends first.
+
+```Python
+
+from multiprocessing import Process, Value
+
+
+def increment_value(shared_int: Value):
+    shared_int.value = shared_int.value + 1
+
+
+if __name__ == "__main__":
+    for _ in range(100):
+        integer = Value("i", 0)
+        procs = [
+            Process(target=increment_value, args=(integer,)),
+            Process(target=increment_value, args=(integer,)),
+        ]
+        [p.start() for p in procs]
+        [p.join() for p in procs]
+        print(integer.value)
+        assert integer.value == 2
+
+```
+
+Here, if both process reads when the integer value is still equal to 0, they will both assign the integer's value to 1.
+
+To avoid the race conditioning, we can **synchronous** access to any shared data we want to modify. This means that when there is a tie between two operations happen, we can pick one operation to happen first. One mechansim is called **lock**. The structure allows for a single process to **lock** a section of code, and the locked section is called critical section.
+
+Let's add the lock for our core part. Here we can just use context manager, which automatically acquire and release the lock.
+
+However, the following code now becomes completely synchronous.
+
+```Python
+
+from multiprocessing import Process, Value
+
+
+def increment_value(shared_int: Value):
+    with shared_int.get_lock():
+        shared_int.value = shared_int.value + 1
+
+
+if __name__ == "__main__":
+    for _ in range(100):
+        integer = Value("i", 0)
+        procs = [
+            Process(target=increment_value, args=(integer,)),
+            Process(target=increment_value, args=(integer,)),
+        ]
+        [p.start() for p in procs]
+        [p.join() for p in procs]
+        print(integer.value)
+        assert integer.value == 2
+
+
+```
+
+So, it is important to use only certain code parts as the critical section.
+
+Now a question is, how do we use process pool for the shared data? To do this, we need to define a global variable, so that every process can visit it.
+
+```Python
+
+import asyncio
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import Value
+
+shared_counter: Value
+
+
+def init(counter: Value):
+    global shared_counter
+    shared_counter = counter
+
+
+def increment():
+    with shared_counter.get_lock():
+        shared_counter.value += 1
+
+
+async def main():
+    counter = Value("d", 0)
+    with ProcessPoolExecutor(initializer=init, initargs=(counter,)) as pool:
+        await asyncio.get_running_loop().run_in_executor(pool, increment)
+        print(counter.value)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+```
+
+We create the counter and initilize it to 0, then pass it to process pool in the main coroutine. 
+
+
+
+### Multiple processes, multiple event loops
+
+Although some tasks seem to be IO-dominant, it can also be beneifitial to use multiprocesses. Why? For example, we need to take the result given by Postgre, and this step still takes CPU. 
+
+What we can do is, for each process, we have its own Python Interpreter and event loop. 
+
+The following code will start 5 processes, each process run 10000 queries concurrently.
+
+```Python
+
+import asyncio
+from concurrent.futures.process import ProcessPoolExecutor
+from typing import Dict, List
+
+import asyncpg
+
+from util import async_timed
+
+product_query = """
+SELECT
+p.product_id,
+p.product_name,
+p.brand_id,
+s.sku_id,
+pc.product_color_name,
+ps.product_size_name
+FROM product as p
+JOIN sku as s on s.product_id = p.product_id
+JOIN product_color as pc on pc.product_color_id = s.product_color_id
+JOIN product_size as ps on ps.product_size_id = s.product_size_id
+WHERE p.product_id = 100"""
+
+
+async def query_product(pool):
+    async with pool.acquire() as connection:
+        return await connection.fetchrow(product_query)
+
+
+@async_timed()
+async def query_products_concurrently(pool, queries):
+    queries = [query_product(pool) for _ in range(queries)]
+    return await asyncio.gather(*queries)
+
+
+def run_in_new_loop(num_queries: int) -> List[Dict]:
+    async def run_queries():
+        async with asyncpg.create_pool(
+            host="127.0.0.1",
+            post=5432,
+            user="postgres",
+            password="password",
+            database="products",
+            min_size=6,
+            max_size=6,
+        ) as pool:
+            return await query_products_concurrently(pool, num_queries)
+
+    results = [dict(result) for result in asyncio.run(run_queries())]
+    return results
+
+
+@async_timed()
+async def main():
+    loop = asyncio.get_running_loop()
+    pool = ProcessPoolExecutor()
+    tasks = [loop.run_in_executor(pool, run_in_new_loop, 10000) for _ in range(5)]
+    all_results = await asyncio.gather(*tasks)
+    total_queries = sum([len(result) for result in all_results])
+    print(f"Retrieved {total_queries} products the product database.")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+
+```
