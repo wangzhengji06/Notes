@@ -263,3 +263,228 @@ p.manufacturer = None
 session.commit()
 ```
 
+## Many-To-Many Relationships
+
+In a standard one-to-many relationships, the "many" side adds a foreign key that points to the "one" side.
+
+However, for a many-to-many relationship, we need a join table.
+
+### A Simple Many-To-Many Relationship Implementation
+
+We make use of a third table called **join** table. The each side establish a one-to-many relationship to that table, which means there should be foreign keys in that table.
+
+Because join table does not need to be translated into a Python Object, it is usually suggested to use `Table` class from sqlalchemy core module instead of letting it inherit from `Model` class
+
+```Python
+ProductCountry = Table(
+    "products_countries",
+    Model.metadata,
+    Column("product_id", ForeignKey("products.id"), primary_key=True, nullable=False),
+    Column("country_id", ForeignKey("countries.id"), primary_key=True, nullable=False),
+)
+```
+
+This table declares two foreign keys as primary keys. When multiple keys are assigned as primary keys, SQLAlchemy creates a composite primary key.
+
+```Python
+from typing import Optional
+
+from sqlalchemy import Column, ForeignKey, String, Table
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from db import Model
+
+ProductCountry = Table(
+    "products_countries",
+    Model.metadata,
+    Column("product_id", ForeignKey("products.id"), primary_key=True, nullable=False),
+    Column("country_id", ForeignKey("countries.id"), primary_key=True, nullable=False),
+)
+
+
+class Product(Model):
+    __tablename__ = "products"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), index=True, unique=True)
+    manufacturer_id: Mapped[int] = mapped_column(
+        ForeignKey("manufacturers.id"), index=True
+    )
+    year: Mapped[int] = mapped_column(index=True)
+    country: Mapped[Optional[str]] = mapped_column(String(32))
+    cpu: Mapped[Optional[str]] = mapped_column(String(32))
+
+    manufacturer: Mapped["Manufacturer"] = relationship(back_populates="products")
+    countries: Mapped[list["Country"]] = relationship(
+        secondary=ProductCountry, back_populates="products"
+    )
+
+    def __repr__(self):
+        return f'Product({self.id}, "{self.name}")'
+
+
+class Country(Model):
+    __tablename__ = "countries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(32), index=True, unique=True)
+
+    products: Mapped[list["Product"]] = relationship(
+        secondary=ProductCountry, back_populates="countries"
+    )
+
+    def __repr__(self):
+        return f'Country({self.id}, "{self.name}")'
+
+
+class Manufacturer(Model):
+    __tablename__ = "manufacturers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), index=True, unique=True)
+
+    products: Mapped[list["Product"]] = relationship(
+        cascade="all, delete-orphan", back_populates="manufacturer"
+    )
+
+    def __repr__(self):
+        return f'Manufacturer({self.id}, "{self.name}")'
+```
+
+A similar thing here is, both Products and Countries need to hold the relationships. Here the `secondary` argument tells SQLAlchemy that its relationship is supported by a secondary table.
+
+The way of importing the data into database still is the same. We first remove the manufacturer and countries for each row and extract products. Then we first add manufacturer, then add the products belong to it. for countries, because it is many to many, we will have to do a loop first.
+
+```Python
+import csv
+
+from db import Model, Session, engine
+from models import Country, Manufacturer, Product
+
+
+def main():
+    Model.metadata.drop_all(engine)  # warning: this deletes all data!
+    Model.metadata.create_all(engine)
+
+    with Session() as session:
+        with session.begin():
+            with open("products.csv") as f:
+                reader = csv.DictReader(f)
+                all_manufacturers = {}
+                all_countries = {}
+                for row in reader:
+                    row["year"] = int(row["year"])
+
+                    manufacturer = row.pop("manufacturer")
+                    countries = row.pop("country").split("/")
+                    p = Product(**row)
+
+                    if manufacturer not in all_manufacturers:
+                        m = Manufacturer(name=manufacturer)
+                        session.add(m)
+                        all_manufacturers[manufacturer] = m
+                    all_manufacturers[manufacturer].products.append(p)
+
+                    for country in countries:
+                        if country not in all_countries:
+                            c = Country(name=country)
+                            session.add(c)
+                            all_countries[country] = c
+                        all_countries[country].products.append(p)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Notice here that because it is a many-to-many relationship, instead of writing `all_countries[country].products.append(p)`, we can do `p.countries.append(all_countries[country])` instead.
+
+### Running query for many-to-many relationship
+
+We can execute the query using the following way, notice that we use join too here.
+
+```Python
+>>> country_count = func.count(Country.id).label(None)
+>>> q = (select(Product, country_count).join(Product.countries).group_by(Product).having(country_count>=2).order_by(Product.name))
+>>> session.execute(q).all()
+[(Product(143, "Komputer 2086"), 2), (Product(142, "Timex Computer 2068"), 3), (Product(138, "Timex Sinclair 1000"), 3), (Product(139, "Timex Sinclair 1500"), 3), (Product(140, "Timex Sinclair 2048"), 3)]
+```
+
+This join here is interesting because we cannot achieve this if we are using SQL.
+Under the hood, it does this:
+
+```Python
+>>> print(q)
+SELECT products.id, products.name, products.manufacturer_id, products.year, products.cpu, count(countries.id) AS count_1
+FROM products JOIN products_countries AS products_countries_1 ON products.id = products_countries_1.product_id JOIN countries ON countries.id = products_countries_1.country_id GROUP BY products.id, products.name, products.manufacturer_id, products.year, products.cpu
+HAVING count(countries.id) >= :param_1 ORDER BY products.name
+```
+
+The one-to-many and many-to-many relationships can be used together, and this opens the door to even more interesting queries.
+
+```Python
+>>> country_count = func.count(Country.id.distinct()).label(None)
+>>> q = select(Manufacturer, country_count).join(Manufacturer.products).join(Product.countries).group_by(Manufacturer).having(country_count>=2)
+>>> session.execute(q).all()
+[(Manufacturer(70, "Timex Sinclair"), 4)]
+```
+
+There is reason we use distinct here, because it is very easy to generate multiple rows when you are doing multiple joins.
+
+### Deleting from Many-To-Many Relationships
+
+Many-To-Many relationships that are configured with the `secondary` option has the advantage that SQLAlchemy does all the maintenance work on the join table.
+
+**When an entity is deleted, SQLAlchemy finds all the entities on the otherside and remove the links.**
+
+Deleting an entity entirely:
+
+```Python
+>>> c = session.get(Country, 22)
+>>> c
+Country(22, "Portugal")
+>>> p = session.get(Product, 138)
+>>> p.countries
+[Country(1, "UK"), Country(3, "USA"), Country(22, "Portugal")]
+>>> session.delete(c)
+>>> p.countries
+[Country(1, "UK"), Country(3, "USA")]
+```
+
+Removing link without deleting entity:
+
+```Python
+>>> c = session.get(Country, 1)
+>>> p = session.get(Product, 138)
+>>> c
+Country(1, "UK")
+>>> p
+Product(138, "Timex Sinclair 1000")
+>>> p.countries.remove(c)
+>>> session.commit()
+>>> p.countries
+[Country(3, "USA")]
+>>>
+```
+
+There is no such thing as `delete-orphan`, some record can have 0 links:
+
+```Python
+>>> c = session.get(Country, 1)
+>>> c
+Country(1, "UK")
+>>> p = session.get(Product, 1)
+>>> p
+Product(1, "Acorn Atom")
+>>> p.countries
+[Country(1, "UK")]
+>>> c.products.remove(p)
+>>> p.countries
+[]
+```
+
+### Database Migration
+
+You need to install the python library `alembic`. Also you need to create a folder using `alembic init migrations`. Here you created a folder called migrations.
+
+The detailed setup is a little hard to follow, maybe reference the book by that time.
