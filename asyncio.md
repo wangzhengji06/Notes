@@ -1935,15 +1935,13 @@ if __name__ == "__main__":
 
 ```
 
-We create the counter and initilize it to 0, then pass it to process pool in the main coroutine. 
-
-
+We create the counter and initilize it to 0, then pass it to process pool in the main coroutine.
 
 ### Multiple processes, multiple event loops
 
-Although some tasks seem to be IO-dominant, it can also be beneifitial to use multiprocesses. Why? For example, we need to take the result given by Postgre, and this step still takes CPU. 
+Although some tasks seem to be IO-dominant, it can also be beneifitial to use multiprocesses. Why? For example, we need to take the result given by Postgre, and this step still takes CPU.
 
-What we can do is, for each process, we have its own Python Interpreter and event loop. 
+What we can do is, for each process, we have its own Python Interpreter and event loop.
 
 The following code will start 5 processes, each process run 10000 queries concurrently.
 
@@ -2015,3 +2013,484 @@ if __name__ == "__main__":
 
 
 ```
+
+## Handling blocking work with threads
+
+We do not always have the privilege of accessing aysnc-ready library like asyncpg. During such situation, we have no choice but to use mulithreading
+
+### Introducing the threading module
+
+Python interpreter runs single-threaded within a porcess due to GIL. This means that only one piece of Python bytecode can be running at one time even if we have code running in multiple threads.
+This seems like Python limits us from using multithreading to any advantage, but there are few cases in which the global interpreter lock is released.
+A primary one for this situation is during I/O operations. Under the hood, Python is making low-level operating system calls to perform I/O.
+
+Let's think about the echo server case. A socket's `recv` and `sendall` are I/O-bound methods, therefore we should be able to run them in seperate threads concurrently.
+
+In the following code, we entered an infinite loop listening for connections. Once we have a client connected, we create a new thread to run the echo function. Then we start the thread and loop again.
+
+Since each `recv` and `sendall` operates in seperate thread per client, these opreations never block each other. They only block the thread they are running in.
+
+```Python
+
+import socket
+from threading import Thread
+
+
+def echo(client: socket):
+    while True:
+        data = client.recv(2048)
+        print(f"Received {data}, sending!")
+        client.sendall(data)
+
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 8000))
+    server.listen()
+    while True:
+        connection, _ = server.accept()
+        thread = Thread(target=echo, args=(connection,))
+        thread.start()
+
+
+```
+
+A problem for this setup is that, user-created threads in Python do not recieve KeyboardInterrupt exceptions, only the main thread will recieve them. Therefore the process will stay alive because we cannot cancle those connection threads.
+
+How to deal with this? One way is to turn our connection threads to daemon threads. When a process only has daemon threads running, the process will shutdown automatically. But this will shutdown abruptly without cleanup logic.
+
+To do this, we'll create subclass for Thread with a cancel method.
+
+```Python
+
+
+import socket
+from threading import Thread
+
+
+class ClientEchoThread(Thread):
+    def __init__(self, client):
+        super().__init__()
+        self.client = client
+
+    def run(self):
+        try:
+            while True:
+                data = self.client.recv(2048)
+                if not data:
+                    raise BrokenPipeError("Connection closed!")
+                print(f"Received {data}, sending!")
+                self.client.sendall(data)
+        except OSError as e:
+            print(f"Thread interrupted by {e} exception, shutting down!")
+
+    def close(self):
+        if self.is_alive():
+            self.client.sendall(bytes("Shutting down!", encoding="utf-8"))
+            self.client.shutdown(socket.SHUT_RDWR)
+
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 8000))
+    server.listen()
+    connection_threads = []
+    try:
+        while True:
+            connection, addr = server.accept()
+            thread = ClientEchoThread(connection)
+            connection_threads.append(thread)
+            thread.start()
+    except KeyboardInterrupt:
+        print("Shutting down!")
+        [thread.close() for thread in connection_threads]
+
+```
+
+Overall, canceling running threads in Python is a generally tricky problem.
+
+### Using threads with asyncio
+
+Creating and managing multiple threads forces us to individually create and keep track of the created threads. We have use process pools from chatper6, we can use thread pools to manage threads in the same manner. Also, we can use asyncio and synchronous library like `requests` to run web requests concurrently.
+
+```Python
+
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+import requests
+
+
+def get_status_code(url: str) -> int:
+    response = requests.get(url)
+    return response.status_code
+
+
+start = time.time()
+
+with ThreadPoolExecutor() as pool:
+    urls = ["http://www.example.com" for _ in range(1000)]
+    results = pool.map(get_status_code, urls)
+    for result in results:
+        print(result)
+
+end = time.time()
+
+
+print(f"finished requests in {end - start:.4f} second(s)")
+
+```
+
+The code above is not as fast as the script implementing using aiohttp. Why? Threads are creating at the operating-system level and more expensive to create than coroutines.
+
+Let's rewrite the script using aysncio syntax.
+
+```Python
+
+
+import asyncio
+import functools
+from concurrent.futures import ThreadPoolExecutor
+
+import requests
+
+from util import async_timed
+
+
+def get_status_code(url: str) -> int:
+    response = requests.get(url)
+    return response.status_code
+
+
+@async_timed()
+async def main():
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor(max_workers=100) as pool:
+        urls = ["http://www.example.com" for _ in range(1000)]
+        tasks = [
+            loop.run_in_executor(pool, functools.partial(get_status_code, url))
+            for url in urls
+        ]
+        results = await asyncio.gather(*tasks)
+        print(results)
+
+
+asyncio.run(main())
+
+```
+
+This still looks difficult, what we can do is to set the first argument in `loop.run_in_executor` as None. This will create a default threadpool, and it will closes when we exit the application, thus no need to use context manager.
+
+A even simple choice is `asyncio.to_thread()`, which was introduced in Python 3.9.
+
+```Python
+
+import asyncio
+
+import requests
+
+from util import async_timed
+
+
+def get_status_code(url: str) -> int:
+    response = requests.get(url)
+    return response.status_code
+
+
+@async_timed()
+async def main():
+    urls = ["http://www.example.com" for _ in range(1000)]
+    tasks = [asyncio.to_thread(get_status_code, url) for url in urls]
+    results = await asyncio.gather(*tasks)
+    print(results)
+
+
+asyncio.run(main())
+
+```
+
+### Locks, shared data, and deadlocks
+
+Multithreaded code is susceptible to race conditions, just like multiprocessing. However, the **memory model** of threads changes the approach slightly.
+
+With multiprocessing, by default the processes we create do not share memory. Therefore we need to create special shared memory objects and properly initilize them so that each process can read and write to that object.
+
+On contrary, threads **do** have access to the same memory of their parent process. This actually maken things much easier.
+
+```Python
+
+import asyncio
+import functools
+from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
+
+import requests
+
+from util import async_timed
+
+counter_lock = Lock()
+counter: int = 0
+
+
+def get_status_code(url: str) -> int:
+    global counter
+    response = requests.get(url)
+    with counter_lock:
+        counter = counter + 1
+    return response.status_code
+
+
+async def reporter(request_count: int):
+    while counter < request_count:
+        print(f"Finished {counter}/{request_count} requests")
+        await asyncio.sleep(0.5)
+
+
+@async_timed()
+async def main():
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor as pool:
+        request_count = 200
+        urls = ["https://www.example.com" for _ in range(request_count)]
+        reporter_task = asyncio.create_task(reporter(request_count))
+        tasks = [
+            loop.run_in_executor(pool, functools.partial(get_status_code, url))
+            for url in urls
+        ]
+        results = await asyncio.gather(*tasks)
+        await reporter_task
+        print(results)
+```
+
+Unlike mulitprocessing in which we have to create a shared Value objects that have locks built in, we'll need to create them ourselves. it turns out that we will need to import the Lock module and use the `acquire` and `release` methods around critical sections of code.
+
+Simple lock seems to work well, but what happens when a thread tries to acquire a lock it has already acquired?
+
+Let's look at a simple example first:
+
+```Python
+
+from threading import Lock, Thread
+from typing import List
+
+list_lock = Lock()
+
+
+def sum_list(int_list: List[int]) -> int:
+    print("Waiting to acquire lock...")
+    with list_lock:
+        print("Acquired lock.")
+        if len(int_list) == 0:
+            print("Finished summing.")
+            return 0
+        else:
+            head, *tail = int_list
+            print("Summing rest of the list")
+            return head + sum_list(tail)
+
+
+thread = Thread(target=sum_list, args=([1, 2, 3, 4],))
+thread.start()
+thread.join()
+
+```
+
+If you run this code, you will get stuck. Why?
+
+The first time we acquire the lock, everything is fine. The second time we try to acquire the lock, we already have the same lock, this causes us to attempt to acquire `list_lock` the second time. This is where we code hangs, because we cannot acquire a lock that is already held by us.
+
+Since the recursion is coming from the same thread that originated it, it should not be a problem to acquire the lock twice as it will not give rise to race-condition. The threading class use `reentrant` locks, which is a special kind of lock that can be acquired by same thread more than once. All we need to do is replacing `Lock` with `Rlock`.
+
+```Python
+
+from threading import RLock
+from typing import List
+
+
+class IntListThreadsafe:
+    def __init__(self, wrapped_list: List[int]):
+        self._lock = RLock()
+        self._inner_list = wrapped_list
+
+    def indices_of(self, to_find: int) -> List[int]:
+        with self._lock:
+            enumerator = enumerate(self._inner_list)
+            return [index for index, value in enumerator if value == to_find]
+
+    def find_and_replace(self, to_replace: int, replace_with: int) -> None:
+        with self._lock:
+            indices = self.indices_of(to_replace)
+            for index in indices:
+                self._inner_list[index] = replace_with
+
+
+threadsafe_list = IntListThreadsafe([1, 2, 1, 2, 1])
+threadsafe_list.find_and_replace(1, 2)
+print(threadsafe_list._inner_list)
+
+```
+
+The same thing happens for the code above, when we call `find_and_replace`, it acquires the lock, and calls `indices_of`, which tries to acquire the lock again. If we do not use `RLock` in this case, it wilt hang forever.
+
+A **deadlock** happens when there is a conetention over a shared resource with no resolution, and our application hangs forever.
+For example, we may have a deadlock with ourselves, when we ask for a lock that is never released in our own thread. A more common situation is, thread A asks for a lock that threads B has acquired, and thread B is asking for a lock that thread A has acquired, we reach a standstill.
+
+```Python
+
+
+import time
+from threading import Lock, Thread
+
+lock_a = Lock()
+lock_b = Lock()
+
+
+def a():
+    with lock_a:
+        print("Acquired lock a from method a!")
+        time.sleep(1)
+        with lock_b:
+            print("Acquried both locks from method a!")
+
+
+def b():
+    with lock_b:
+        print("Acquired lock b from method b!")
+        with lock_a:
+            print("Acquired both locks from method b!")
+
+
+thread_1 = Thread(target=a)
+thread_2 = Thread(target=b)
+thread_1.start()
+thread_2.start()
+thread_1.join()
+thread_2.join()
+
+```
+
+How to deal with this? In this simple case, one method is to just change the order such that both methods first acquire lock A and then acquire lock B.
+
+### Event loops in seperate threads
+
+Here comes the situation where, we're working in an existing synchronous application and we want to incoporate asyncio.
+
+One such situation is building desktop user interfaces. The frameworks to build GUIs usually have their own event loop. Therefore, we have to run multiple event loops in seperate threads.
+
+Below is a simple hello-world application with Tkinter.
+
+```Python
+
+import tkinter
+from tkinter import ttk
+
+window = tkinter.Tk()
+window.title("Hello world app")
+window.geometry("200x100")
+
+
+def say_hello():
+    print("Hello there!")
+
+
+hello_button = ttk.Button(window, text="Say hello", command=say_hello)
+hello_button.pack()
+
+window.mainloop()
+
+```
+
+The last command `window.mainloop()` basically starts the event loop of tkinter, and it will blocks if one oepration is taking too long, the UI will be frozen. For example, if we make `sleep(10)` for pressing a button, the UI will be stuck.
+
+A basic idea here is, we'll have Tkinter event loop running in main thread, and we'll run the asyncio event loop in a seperate thread. When user hits the button, we submit a coroutine to the asyncio event loop to run the stress test. `asyncio.run` will block the main event loop, which is not good. We should use `call_soon_threadsafe` and `run_coroutine_threadsafe`.
+
+Okay this part is kind of difficult, so please check code on the book.
+
+### Using threads for CPU-bound work
+
+The rule of thumb is multi-threading only makes sense for blocking I/O work, as I/O will release the GIL. But if we can avoid interacting with Python objects, multithreading might also provide a lot. This effect is prominent in library that is written in pure C, like hashilib and Numpy.
+
+This gives us opportunity to interact with them using multithreading technique.
+
+```Python
+import asyncio
+import functools
+import hashlib
+import os
+import random
+import string
+from concurrent.futures.thread import ThreadPoolExecutor
+
+from util import async_timed
+
+
+def random_password(length: int) -> bytes:
+    ascii_lowercase = string.ascii_lowercase.encode()
+    return b"".join(bytes(random.choice(ascii_lowercase)) for _ in range(length))
+
+
+passwords = [random_password(10) for _ in range(10000)]
+
+
+def hash(password: bytes) -> str:
+    salt = os.urandom(16)
+    return str(hashlib.scrypt(password, salt=salt, n=2048, p=1, r=8))
+
+
+@async_timed()
+async def main():
+    loop = asyncio.get_running_loop()
+    tasks = []
+
+    with ThreadPoolExecutor() as pool:
+        for password in passwords:
+            tasks.append(loop.run_in_executor(pool, functools.partial(hash, password)))
+
+    await asyncio.gather(*tasks)
+
+
+asyncio.run(main())
+```
+
+Numpy is another example here, it is generally safe to assume that, matrix operations can be potentially multithreaded for a performance win.
+
+```Python
+
+import asyncio
+import functools
+from concurrent.futures.thread import ThreadPoolExecutor
+
+import numpy as np
+
+from util import async_timed
+
+
+def mean_for_row(arr, row):
+    return np.mean(arr[row])
+
+
+data_points = 400000000
+rows = 50
+columns = int(data_points / rows)
+
+matrix = np.arange(data_points).reshape(rows, columns)
+
+
+@async_timed()
+async def main():
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor() as pool:
+        tasks = []
+        for i in range(rows):
+            mean = functools.partial(mean_for_row, matrix, i)
+            tasks.append(loop.run_in_executor(pool, mean))
+
+        asyncio.gather(*tasks)
+
+
+asyncio.run(main())
+
+```
+
+This is faster than using `np.mean(matrix, axis=1)`.
+
