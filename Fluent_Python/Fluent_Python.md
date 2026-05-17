@@ -99,3 +99,132 @@ array.array('I', (ord(symbol) for symbol in symbols))
 Suppose you are trying to build 1000 \* 1000 using expression, of course using generator will save you the memory of having to build a list with a million items.
 
 ### Tuples are not just immutable lists
+
+When using Tuple, the number of itmes is often fixed and the order is always vital. 
+
+#### Tuple Unpacking
+The only requirement for tuple unpacking is that the iterable yields exactly one item per variable in the receiving tuple. 
+
+```Python
+lax_coordinates = (33, -118)
+latitude, longitude = lax_coorinates
+```
+
+The above example is assigning items from an itertable to a tuple of variables. This works for any iterable!
+
+```Python
+a, b, *rest = range(5)
+rest 
+[2, 3, 4]
+
+*head, b, c, d = range(5)
+head
+[0, 1]
+
+name, cc, (latitude, longitude) = (xx, yy, (xx, yy))
+```
+
+
+#### Named Tuples
+`collection.namedtuple` is a factory that produces subclass of tuple enhanced with field names and a class name. A normal object stores its feild in `__dict__`, which is memory-costly, but named tuple does not have that.
+
+```Python
+City = namedtuple('City', 'name country population')
+delhi_data = ('Delhi_NCR', 'IN', (LatLong(20,30)))
+delhi = City._make(delhi_data) # dehli = City(*dehli_data)
+delhi._asdict()
+```
+
+#### Tuples as Imutable Lists
+Tuples support all the list mothods except modifcation ones. Also, it lacs `_reversed_` method, but `reserved(my_tuple)` will work without it.
+
+
+
+
+
+### Slicing
+#### Slice Objects
+s[a:b:c] will produce a slice object `slice(a,b,c)`, and to evaluate `seq[start:stop:step]`, Python calles `seq._getitem_(slice(start, stop, step))`
+
+#### Multidimensional Slicing and Ellipsis
+You can do multidimensional slicing using something like a[i, j] which is used in `numpy`. Python will inherently call `a._getitem_((i, j))`.
+
+`x[i, ...]` is a shortcut for `x[i, :, :, :]`. 
+#### Assigning to Slices
+```Python
+l = list(range(10))
+l[2:5] = [20, 30]
+k[2:5] = 100 # THis will not work
+```
+WHen the target of assignment is slice, right side must be an iterable object.
+
+
+
+
+
+### Using + and * with Sequences
+Python programmers expect sequneces support + and *. A new object will be created as a result of concatenation. 
+
+#### Buliding Lists of lists
+When we want to initialize a list with a certain number of nested lists, the best way is to use a list comprehension.
+```Python
+board = [['_'] * 3 for i in range(3)]
+board_2 = [['_'] * 3] * 3]
+```
+
+The first is like the following:
+```Python
+row = ['_'] * 3
+board = []
+for i in range(3):
+	board.append(row)
+```
+
+The second is like this:
+```Python
+board = []
+for i in range(3):
+	row = ['_'] * 3
+	board.append(row)
+```
+In short it is doing shallow copy with the `*` mark.
+
+
+
+### Augmented Assignment with Sequences
+`+=` and `*=` is implemented by `_iadd_` and `_imul_` special methods. If the two methods are not evaluated, it will fall back to `a = a + b` and `a = a * b`. 
+
+List using `+=` and `*=` will keep the same id.
+
+#### A += Assignment Puzzler
+```Python
+t = (1, 2, [30, 40])
+t[2] += [50, 60]
+```
+What would happen is, the tuple will change and error will be raised. Puting mutable items in tuples is not a good idea.
+
+
+
+### list.sort and the sorted Built-in Function
+The `list.sort` will sort in place. In contrast, `sorted` will create a new list and returns it.
+
+
+### Managing Ordered Sequences with bisect
+`bisect` uses binary search for needle in haystack. This requires the list to be sorted.
+
+`bisect.bisect_left(HAYSTACK, needle)` Find the first insertion place before the first existing duplicate element. You can guess what `bisect_right` does.
+
+`bisect.insort_left(seq, item)` will insert while keep the sequence being sorted.
+
+
+
+
+### When a List is Not the Answer
+
+List is not always the answer, for example, if you are constantly adding something to the head and tail, maybe consider `deaue`. If you are storing large data, maybe use `array`. If you have a lot of containment checks, maybe use `set`. 
+
+#### Memory Views
+a shared-memory sequence type that lets you handle slices of array without copying bytes. Used when you want to modify existing binary data without copying it.
+
+#### Deque
+Thread-safe, can have maximum length. But removing items from middle of a deque is not as fast.
