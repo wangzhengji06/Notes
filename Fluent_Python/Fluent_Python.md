@@ -265,7 +265,7 @@ my_dict[key].append(new_value)
 
 ### Mappings with Flexible Key Lookup
 When you want to get something if a missing key is searched, there are two methods. 1. Use `defaultdict`. Second, use `__missing__` method.
-
+	
 #### Defaultdict
 if you do `dd = defaultdict(list)`, what is happening is, it will call list() to create new object, insert the list into dd using `new-key` as key, and returns a reference to that list. The callable is `default_factory`. 
 
@@ -321,4 +321,43 @@ Because UserDict subclasses MutableMapping, you have `update` method and `get` m
 We might not want the users to make change to maping. `MappingProxyType` is such read-only instance from a dict. 
 
 `d_proxy = MappingProxyType(d)` where d is a inner mapping. We can expose the ProxyType to user while the internal dict to ourselves.
+
+### Set Theory
+Set elements must be hashable, but set type is not hashable. 
+
+```Python
+found = len(set(needles) & set(haystack))
+```
+
+Don't forget, `{}` in Python means empty dict.
+
+On ther otherhand, `frozenset` must be created by calling the constructor.
+```Python
+frozenset(range(10)
+```
+
+#### Set Comprehensions
+```Python
+{chr(i) for i in range(32,256) if 'SIGN' in name(chr(i), ''}
+```
+
+### dict and set Under the Hood
+Under the hood, Python keeps a has table as some sparse array. The hash function works such that if two objects compare equal, their hash values must be equal also.
+
+To fetch the value `my_dict[search_key]`, Python calls `hash(search_key)`, and uses the least significant bits of number as an offset to loop up a bucket. 
+
+it will do a matching for search key and found key, and if not equal, it will use other information as offset to keep searching.
+
+### Practical Consequences of How dict Works
+
+An object is hashable if the 3 requirements below are met:
+1. It has `hash()` function.
+2. It supports `eq()` method.
+3. `if a == b`, then `hash(a) == hash(b)`
+
+because the way dict is working, while handling large quantity of records, it makes more sense to store them in a list of tuples / named tuples instead of using a list of dictionaries in JSON style. 
+
+The order of keys in dict can change depend on insertion order. Adding items to a dict may also change the order of existing keys due to Python interpreter may decide that hash table of dict needs to grow. Therefore, if you want to iterate over keys and change at the same time, do it in *TWO STEPS*. 
+
+Set basically share the same properties as dict.
 
