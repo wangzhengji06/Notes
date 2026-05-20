@@ -360,4 +360,77 @@ because the way dict is working, while handling large quantity of records, it ma
 The order of keys in dict can change depend on insertion order. Adding items to a dict may also change the order of existing keys due to Python interpreter may decide that hash table of dict needs to grow. Therefore, if you want to iterate over keys and change at the same time, do it in *TWO STEPS*. 
 
 Set basically share the same properties as dict.
+	
 
+## Text versus Bytes
+### Character Issues
+String is just a sequence of characters.
+
+But what is character? Unicode standard explicitly seperates the identity of characters from specific byte representaitons.
+
+The identity of a cahrachter is a number. In Unicode standard it is show as `U+xx`. 
+
+The actual bytes that represent a cahracter depend on the encoding it use. An encoding is an algorithm that converts code points to byte sequences and vice cerca. 
+
+### Byte Essentials
+A slice of a binary sequence always produces a binary sequence of the same type - including slices of length 1. 
+
+```Python
+cafe = 'café' # this is a str, which is Unicode text
+cafe = cafe.encode('utf-8') # This becomes bytes now
+cafe[0] # returns the first byte as integer, because c is encoded by byte value 99.
+cafe[:1] #Will return a byte object b`c` which menas a byte object containing byte 99, Python displays it as c bacause 99 is priuntable ASCII
+cafe_arr = bytearray(cafe) # like bytes, but mutable
+cafe_arr[-1:] # Slicing bytearray returns another bytearray
+```
+
+Therefore, 3 different displays are used, ASCII, `\n` like special character, and hexademical escape sequence.
+
+How to initialize the bytes? 
+1. bytes.fromhex('63 61 66 c3 a9') # in Decimal it would be 99 ..... that in the end translates to café.
+2. str object and encoding keyword
+3. A single integer to create a binary sequence of that size initialized with null bytes.
+4. An object that implements the buffer protocol.
+
+#### Structs and Memory Views
+`struct` module provides functions to parse packed bytes into a tuple of fields of different types and to perform the opposite conversion, from a tuple into packed byte. 
+
+```Python
+import struct
+fmt = '<3s3sHH'
+with open('filter.gif', 'rb') as fp:
+	img = memoryview(fp.read()) 
+	
+header = img[:10]
+bytes(header)
+struct.unpack(fmt, header)
+
+```
+### Basic Encoders/Decoders
+There are a lot....
+
+
+### Understanding Encode/Decode Problems
+#### Coping with UnicodeEncodeError
+When converting text to bytes, if a character is not defined in the target encoding, `UnicodeEncodeError` will be raised. You can cope using `encode("xxx", errors="ignore")`.
+
+#### Coping with UnicodeDecodeError
+Not every bytes hold valid UTF8 character, when you assume such encoding while converting binary sequence to text, you will get a `UnicodeDecodeError` if unexpected bytes are found.
+
+On the other hand, sometimes you will not get error, and program will just silently decode garbage.
+
+#### SyntaxError when Loading Modules with Unexpected Encoding
+Python3 assuems UTF-8 accross platforms. if you have a py file that uses a different encoding and you want to import you can add magic coding comment.
+
+```Python
+# coding: cp1252
+```
+
+#### How to discover the encoding of a byte sequence
+You can use `Chardet` package. 
+
+
+#### BOM: A Useful Gremlin
+BOM is a byte-order mark at the start of the byte sequence to say this UTF-16 text is little-endian or big-endian. 
+
+UTF-8 on the other hanmd has no suchj problem, but some Windows programs put a UTF-8 BOM at the start. When you encounter such and want to use python to read, you can use encoding method `utf-8-sig`. 
