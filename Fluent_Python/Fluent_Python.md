@@ -434,3 +434,96 @@ You can use `Chardet` package.
 BOM is a byte-order mark at the start of the byte sequence to say this UTF-16 text is little-endian or big-endian. 
 
 UTF-8 on the other hanmd has no suchj problem, but some Windows programs put a UTF-8 BOM at the start. When you encounter such and want to use python to read, you can use encoding method `utf-8-sig`. 
+
+
+### Handling Text Files
+The best practice for handling text is "Unicode sandwich". Bytes should be encoded to str as early as possible. The meat is the business logic of your program. Then you encode it to byte. 
+
+Python3 makes this very easy by using `open` that alreay takes care of the encoding. You should always explictly says the encoidng, otherwise it might default to system encoding. 
+
+
+#### Encoding Defaults: A Madhouse
+THere are different encoding messing around. But to summarize, what determines everything is `local.getpreferredencoding()`, this basically set the default.
+
+Morale of the story is to never beleive in default encoding. 
+
+### Normalizing Unicode for Saner Comparisons
+`é` and `e\u0301` should be treated the same way in applications, but Python will see two different sequences and consider them not equal.
+
+```Python
+>>> s1 = 'café'
+>>> s2 = 'cafe\u0301'
+>>> s1, s2
+('café', 'café')
+>>> len(s1), len(s2)
+(4, 5)
+>>> s1 == s2
+False
+```
+
+NFC(Normalization Form C) composes the code points to produce the shortest equivalent string.
+
+```Python
+>>> from unicodedata import normalize
+>>> s1 = 'café' # composed "e" with acute accent
+>>> s2 = 'cafe\u0301' # decomposed "e" and acute accent
+>>> len(s1), len(s2)
+(4, 5)
+>>> len(normalize('NFC', s1)), len(normalize('NFC', s2))
+(4, 4)
+>>> len(normalize('NFD', s1)), len(normalize('NFD', s2))
+(5, 5)
+>>> normalize('NFC', s1) == normalize('NFC', s2)
+True
+```
+
+#### Case Folding
+ `str.casefold()` can convert all text to lowercase, but this does not produce the same result as `s.lower()` sometimes. For example, it will transform Greek letter.
+ 
+#### Utility Functions for Normalized Text Matching
+NFC and NFD allows the safe compariosn between Unicode strings. You can use `normalize('NFC', str)== normalize('NFC', str2)` , or `normalize('NFC', str1).casefold()`.
+
+#### Extreme "Normalization": Taking Out DIacritics
+```Python
+import unicodedata
+import string
+
+def shave_marks(txt):
+	"""Remove all diacritic marks"""
+	norm_txt = unicodedata.normalize('NFD', txt)
+	shaHved = ''.join(c for c in norm_txt
+		              if not unicodedata.combining(c))
+	return unicodedata.normalize('NFC', shaved)
+ ```
+ this function aggressively change Latin text(Also nonlatin) to pure ASCII.
+ 
+```Python
+import string
+import unicodedata
+
+
+def shave_marks_latin(txt):
+    """Remove all diacritic marks from Latin base characters."""
+    norm_txt = unicodedata.normalize("NFD", txt)
+    latin_base = False
+    keepers = []
+
+    for c in norm_txt:
+        if unicodedata.combining(c) and latin_base:
+            continue  # ignore diacritic on Latin base char
+
+        keepers.append(c)
+
+        # If it isn't a combining char, it is a new base char
+        if not unicodedata.combining(c):
+            latin_base = c in string.ascii_letters
+
+    shaved = "".join(keepers)
+    return unicodedata.normalize("NFC", shaved)
+```
+
+This function will not remove combining marks if the previous letter is not Latin, so it only cleans the latin part. 
+
+
+### Sorting Unicode Text
+
