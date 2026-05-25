@@ -4,7 +4,7 @@
 
 Being pydantic actually is making good use of Python data model. The Python intepreter invokes special methods to perform basic operations, which is usually called `dunder method`.
 
-```Python
+```python
 import collections
 Card = collections.namedtuple('Card', ['rank', 'suit'])
 
@@ -526,4 +526,118 @@ This function will not remove combining marks if the previous letter is not Lati
 
 
 ### Sorting Unicode Text
+
+You can uase `pyuca` library. This allows the comparison of non-Latin non-ASCII character. It also does not take Locale into account. 
+
+If you just use the python vanilla sort, it will only sort using unicode, which is terrible, because character like `á` is expected to be close to `a`, but unicode value of them are in large difference.
+
+```Python
+>>> import pyuca
+>>> coll = pyuca.Collator()
+>>> fruits = ['caju', 'atemoia', 'cajá', 'açaí', 'acerola']
+>>> sorted_fruits = sorted(fruits, key=coll.sort_key)
+>>> sorted_fruits
+['açaí', 'acerola', 'atemoia', 'cajá', 'caju']
+```
+
+### Unicode Database
+Unicode standard provides an entire database. This means that it will record whether a chatacter is printable, is a ltter or is a decimal digit or is some other numeric symbol. Therefore, unicode module provides methods that are highly reliable. Compared to re, sometimes it cannot recognize some letter being numeric value.
+
+### Dual-Mode str and bytes API
+When you are using regx, str regex work on Unicode characters, while byte regix works on raw byte values, therefore it can only handle ASCII letters.
+
+#### str Versus bytes on os Functions
+Almost always you should read filename in str. But sometimes there are some weird filenames that use different encoding other than utf8.
+
+```Python
+import os
+for name in os.listdir(b"."):
+	print(name)
+```
+
+This lets you see the exact raw bytes. You can then decide how to decode or fix them manually.
+
+A workaround if you cannot find the encoding
+
+```Python
+name = b"digits-of-\xcf\x80.txt".decode("ascii", "surrogateescape")
+=> "digits-of-\udccf\udc80.txt"
+```
+This maintains the bytes. 
+
+
+## First-Class Functions
+
+`first-class object` can: 1. be created at run time 2. assigned to a variable or element in a data strucutre 3. passed as an argument to a function 4. returns as the value of the function
+
+### Treating a Function Like an Object
+### Higher-Order Functions
+A function that takes a function as argument or returns a function as the result is a higher-order function. One example is map. 
+
+#### Modern Replacements for map, filter, and reduce
+listcomp and genexp does the job of map and filter in a more readable way. 
+
+```Python
+>>> list(map(fact, range(6)))
+[1, 1, 2, 6, 24, 120]
+>>> [fact(n) for n in range(6)]
+[1, 1, 2, 6, 24, 120]
+>>> list(map(factorial, filter(lambda n: n % 2, range(6))))
+[1, 6, 120]
+>>> [factorial(n) for n in range(6) if n % 2]
+[1, 6, 120]
+```
+
+Reduce is largely replaced by sum(iterable), all(iterable) and any(iterable).
+
+### Anonymous Functions
+The `lambda` keyword creates an anonymous function within a Python expression. But it cannot make assignemnt or use statements such as `while`, `try`, etc. 
+
+In a way, this `lambda` syntax is just synatctic sugar: it creates a function object just like the `def` statement. 
+
+### The Seven Flavors of Callable Objects
+Use `callable()` built-in function to check all the callable types. 
+
+1. User-defined functions
+2. Built-in functions
+3. Built-in methods
+4. Methods
+5. Classes
+6. Class instances
+7. Generator functions
+
+### User-Defined Callable Types
+Arbitary Python objects may be made to behave like functions. All you need to do is implement a `__call__` instance method. 
+
+```Python
+import random
+
+class BingoCage:
+	
+	def __init__(self, items):
+		self._items = list(items)
+		random.shuffle(self._items)
+		
+	def pick(self):
+		try:
+			return self._items.pop()
+		except IndexError:
+			raise LookupError('pick from empty BingoCage')
+			
+	def __call__(self):
+		return self.pick()
+		
+```
+Then you can do something like this:
+
+```Python
+>>> bingo = BingoCage(range(3))
+>>> bingo()
+0
+```
+
+This is an easy way to create function-like objects that have some internal states that must be kept across invocations. A totally different approach to creating fcuntions with internal state is to use closures. 
+
+### Function Introspection
+
 
