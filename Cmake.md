@@ -276,3 +276,68 @@ message(STATUS ${GREET_NAME})
 
 Here it will print Alice, Alice, Bob. Why? we indeed modify the one at the parent scope, but the function scope still has the same copy, and it knows that you are not changing its local copy.
 
+
+## Generator Expression
+
+Generator expression will not be evaluated in the configuration phase.
+
+```Cmake
+set(GENERATOR_RESULT $<1:Hello World>)
+
+file(GENERATE OUTPUT out.txt CONTENT
+    "generate result: ${GENERATOR_RESULT}")
+```
+
+This will acutaly output the list `Hello, World` to out.txt.
+
+The key here is we are delaying the evaluation to later.
+
+```Cmake
+set(GENERATOR_RESULT $<VERSION_GREATER:1.15, 1.3>)
+```
+
+This will give result to 1 because 1.15 > 1.3 in terms of version number.
+
+We can use nested generator expression
+
+```Cmake
+set(GENERATOR_RESULT $<AND:$<STREQUAL:TEST,TEST>,$<VERSION_GREATER:1.15, 1.3>>)
+
+file(GENERATE OUTPUT out.txt CONTENT
+    "generate result: ${GENERATOR_RESULT}")
+```
+
+## Cmake Directory Management
+
+The thing here is sometimes when your project goes larger, you need several folders.
+
+You can create a sepearte `CMakeLists.txt` inside the subfolder.
+
+But you need to provide a way to let the top-level `CMakeLists.txt` to find the folder-level `CMakeLists.txt`.
+
+An important thing here is, when you enter into local scope, basically you just copy the value to the local scope, so any modification does not persist. Just like a function!
+
+```Cmake
+message(STATUS "CMAKE_SOURCE_DIR: ${CMAKE_SOURCE_DIR}")
+message(STATUS "CMAKE_CURRENT_SOURCE_DIR: ${CMAKE_CURRENT_SOURCE_DIR}") 
+message(STATUS "CMAKE_BINARY_SOURCE_DIR: ${CMAKE_BINARY_DIR}")
+message(STATUS "CMAKE_CURRENT_BINARY_SOURCE_DIR: ${CMAKE_CURRENT_BINARY_DIR}")
+```
+
+These are all the important variables that you need to memorize
+
+
+```Cmake
+include(cmake/test.cmake)
+```
+
+When you use include, it will not change your source directory. The binary directory also would not change.
+
+So it is not creating a new scope! Just like a macro.
+
+```Cmake
+message(STATUS "CMAKE_CURRENT_LIST_DIR: ${CMAKE_CURRENT_LIST_DIR}")
+```
+
+You can use this to print the current file name.
+
