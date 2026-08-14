@@ -1,6 +1,8 @@
-# Session 1
+# Session with Dawn
 
-## Nixos command
+## Session 1
+
+### Nixos command
 
 `nixos-rebuild repl` What this does is it is going to build the config.build.system.build.toplevel using the xxx as the configuration.nix. But actually you only get the derivation, you dont get the actual thing.
 
@@ -12,7 +14,7 @@
 
 `sudo nix-channel --list`
 
-## Nixos Good and Bad
+### Nixos Good and Bad
 
 What we want from Nixos is reproducibility. But Nixos by default does not give us that.
 
@@ -22,7 +24,7 @@ What we want from Nixos is reproducibility. But Nixos by default does not give u
 
 3. It is related to reason 2, but all those modules, packages and library are coming from a git revision, which ultimately coming from channels. Channel can mutate.
 
-## Flake
+### Flake
 
 A flake is a special nix file that acts as the input locker that replaces the channels. It gives CLI to update the input and overwrite the cli. Another thing here is that it is the entry point for the project. The entry point will always be flake.nix.
 
@@ -30,6 +32,105 @@ But although flake is good for development, but it is not good for consumption. 
 
 After defining everything, use flake.nix
 
-## Git related
+### Git related
 
 make use of `git add -p`
+
+# Session from Online Video
+
+## Introudction
+
+### Inject and Run
+
+`nix run nixpkgs#hello` does just a simple run. For example, `nix run nixpkgs#ripgrep -- --version` here the first `--` is used purely as a seperator.
+
+`nix shell nixpkgs#hello` create an actual shell session.
+
+`nix-shell -p hello ripgrep` is a good way to include mutiple packages into one shell.
+
+### Expose Systemwide bin
+
+`nix profile` is a way to remove or add packages and expose them systemwise. For example, `nix profile list` will list all the current packages. `nix profile add nixpkgs#ripgrep` will add the ripgrep into the profile.
+
+What nix profile does is, it will append all these bin files to ~/.nix-profile/bin/. You can of course remove it using `nix profile remove nixpkgs#ripgre`.
+
+You can even use `nix profile rollback` if you did some unwanted changes. Why is this possible? Becuase nix stores all the generations in the `.local` folder, and each generation is just a symlink.
+
+`nix profile upgrade --all` will update all the packages inside nix profile.
+
+### Clean(pinned also)
+
+`nix-collect-garbage` will automatically clean all the unpinned files in nixstore. However, for example, our nix-profiles still have a backup for all the previous versions. To install these files as well, use `nix-collect-garbage -d`.
+
+## Nix as a language
+
+`nix eval --json` allows you to render the nix version to json. File format like `json`, `yaml`, `toml` are all supported, so you can use nix as the template.
+
+Now everything below assumes that you are typing insdie a nix repl.
+
+`:doc builtins.throw` allow you to see the help command from nix on how to use this function.
+
+`nix repl --file '<nixpkgs>'` eval Nix expression interactively against Nixpkgs.
+
+`:u pkgs.hello` built it + give me a shell where I can use it.
+
+`:b pkgs.hello` Build it.
+
+`:p {x=1; inherit s;}` means print the value recursively.
+
+`:r` to reset.
+
+### attrset and inherit
+
+`{}` works like a dictinoary in python
+
+`{inherit x; inherit (s) a b; }` here it bascially means take the s.a and s.b into the a and b inside this attrset.
+
+`set ? a` is a in the attrset?
+
+`set.c or 10` is set.c there? if not give me 10.
+
+You can think of currying in nix like Python's class.
+
+`let` is good because after the let cluase ended it goes out of the scope.
+
+`with` will overwrite the previous with, if two with in the same scope. But global one always wins.
+
+Use two \`\` to start margical lines.
+
+You can use `//` to do union. Union, just like with, will let the latter one wins.
+
+`import file.nix` is just trying to evaluate the nix pression in file.nix.
+
+There is no statement in nix, the whole file has to be one big expression.
+
+### How to debug the nix
+
+You can use `builtins.trace "hello!" (x+y+z)` to print some helpful information
+
+`break` written inside nix will set a breakpoint, you can use `nix eval -f debug.nix --debugger` to stop at the break point, and use `:env` to check the variables, and use `:c` to continue.
+
+### Lazy Evaluation
+
+Nix ix doing lazy evaluation. Which means: it sometimes wont access the variable, if all it needs is to evaluate its length, or even no need for evaluation at all. o
+
+### List
+
+has `tail`, `head`, `length`. 
+
+Use `++` to conctenate list.
+
+Plese always add space ` x + 1 `, because nix allows the name like `x-1` as a variable name.
+
+
+### map, filter, foldl' and friends
+
+`builtins.filter (x: x > 2) [ 100 2 30 ]` can be used to filter
+
+`map (x: x * x) [ 1 2 3 4 5]` can be used to map
+
+`foldl` just like reduce
+
+### Way to import Nixpkgs
+
+`pkgs = import ./path/to/nixpkgs {}` the nixpkgs actually return a function, thus it is required to provide an empty bracket, or some real arguments.
