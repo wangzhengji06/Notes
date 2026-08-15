@@ -134,3 +134,176 @@ Plese always add space ` x + 1 `, because nix allows the name like `x-1` as a va
 ### Way to import Nixpkgs
 
 `pkgs = import ./path/to/nixpkgs {}` the nixpkgs actually return a function, thus it is required to provide an empty bracket, or some real arguments.
+
+## Dev Shell
+
+### The normal way: using nix-build and nix-shell
+
+
+The problem with docker is that, first, it seperates the environment, also every time you want to make change you will have to rebuild docker. 
+
+Here is an example of shell.nix that you can define
+
+```nix
+let
+  pkgs = import <nixpkgs> { };
+in
+
+pkgs.mkShell {
+  packages = with pkgs; [
+    byacc
+    automake
+    autoconf
+    pkg-config
+    gnumake
+    ncurses
+    libevent
+  ];
+}
+```
+
+You can use this to build tmux.  What is better compared to docker is that, when you want to rebuld the tool using bison instead of byacc, you can just redownload  package, and rebuild, But if you are using docker, then you will have to rebuild everything again.
+
+Now you can smoothly transform from shell.nix to default.nix
+
+```nix
+let
+  pkgs = import <nixpkgs> { };
+in
+pkgs.stdenv.mkDerivation {
+  name = "tmux";
+  src = ./.;
+
+  nativeBuildInputs = with pkgs; [
+    byacc
+    automake
+    autoconf
+    pkg-config
+  ];
+
+  buildInputs = with pkgs; [
+    ncurses
+    libevent
+  ];
+  preConfigure = ''
+    ./autogen.sh
+  '';
+}
+```
+
+`nativeBuildInputs` are all the commands that you really use during the build process.
+
+
+And here is a even more beautiful thing, if you use `nix-shell`, and there is not `shell.nix`, it will actually read `default.nix`, and install all those nativeBuildInputs and buildInputs.
+
+So now we both have a development shell and a production deployment method. 
+
+We can also write the following release.nix
+
+```nix
+let
+  pkgs = import <nixpkgs> { };
+  tmux = pkgs.stdenv.mkDerivation {
+    name = "tmux";
+    src = ./.;
+
+    nativeBuildInputs = with pkgs; [
+      byacc
+      automake
+      autoconf
+      pkg-config
+    ];
+
+    buildInputs = with pkgs; [
+      ncurses
+      libevent
+    ];
+    preConfigure = ''
+      ./autogen.sh
+    '';
+  };
+
+in
+{
+  inherit tmux;
+  devShell = pkgs.mkShell {
+    packages = with pkgs; [
+      shellcheck
+      clang-analyzer
+    ];
+    inputsFrom = [ tmux ];
+  };
+}
+
+```
+
+Then we can use `nix-build release.nix -A tmux` to build the nix from the attribute set returned. 
+
+We can further define the shell.nix as the following
+
+```nix
+(import ./release.nix).devShell
+```
+
+And your default.nix can be 
+
+```nix
+(import ./release.nix).tmux
+```
+
+We get the both of best worlds, we get a minium deployment way, and we can also have a development environment with tools installed. 
+
+
+### The flake way
+
+Use `nix flake init` to initiate a directory, it will create `flake.nix` with tempaltes inside.
+
+We can make use of the release.nix to do the magic trick
+
+```nix
+{
+  description = "Cool tmux flake";
+
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
+  };
+
+  outputs =
+    { self, nixpkgs }:
+    let
+      pkgs = nixpkgs.legacyPackages.x86_64-linux;
+    in
+    {
+      packages.x86_64-linux.default = pkgs.stdenv.mkDerivation {
+        name = "tmux";
+        src = ./.;
+
+        nativeBuildInputs = with pkgs; [
+          byacc
+          automake
+          autoconf
+          pkg-config
+        ];
+
+        buildInputs = with pkgs; [
+          ncurses
+          libevent
+        ];
+
+        preConfigure = ''
+          ./autogen.sh
+        '';
+      };
+    };
+}
+```
+
+Also by making use of `nix build -L` we can show the full log of what is being built.
+
+Also use `nix flake show` to evaluate the flake, what will be built in the end?
+
+Use `nix develop` to enter into the development shell defined by flake.
+
+### direnv
+
+Just use it....
