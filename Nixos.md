@@ -36,6 +36,46 @@ After defining everything, use flake.nix
 
 make use of `git add -p`
 
+## Session 2
+
+### Make the output of flake the instantiation of the configuration
+
+cli can take any attrpath of the output of the flake. You can use whatever the form you like, but usually people like to do `nixosConiguration.hostname` because it is expected. 
+
+The result of the flake will be a `nixosConfiguration`.
+
+flake by default uses pure mode. This means that, only the file that git is aware of can be copied into the nix store. So, only abosluate nix store path and relative path can be used.
+
+`nix flake metadata` is a good command that can be used to check the flake.
+
+There are different ways to fetch the nixpkgs, like tarball...
+
+What does `flake=false` do? it means only fetching the input, while true would fectch the input and also evaluate its flake.
+
+Inside `flake.lock`, the hash stands for the content that is fetched. When flake redownloads something, it needs to make sure the input is the same.
+
+`nixos-rebuild build --flake .#golden` is used to build the system.
+
+flake is pure, so cannot use something like `builtin.currentSystem` etc....
+
+A good part about flake is you get the evaluation cache. You also control the source.
+
+### Git worktree and bare repo
+A bare repo means that you only get the .git file. Worktree is a seperate directory where one branch is checked out, while still sharing the same .git.
+Here a useful alias is `clone --bare --config remote.origin.fetch=+refs/heads/*:refs/remotes/origin/*` 
+
+
+### Nixos module system
+The modules attr name, can accept function / attrset, or string like patterns. The reason why we directly pass the path string to module list is because, it allows to generate a key that is  to avoid deduplicate the module import.
+
+After I evaluate the configuration.nix, the NixOS module system loads it, calls it with module arguments like config, lib, and pkgs, and gets back a module attrset, I got to see that it returns a attrset. Then attrset is evaluated using the lib.evalModules.
+
+It contains type, class, bascially telling you that "I am the configuration of nixos". config is the value of the options, it is also the result of evaluation. pkgs is the instance of the nix packages used here.
+
+### Why is my build different than your build?
+You should use `https://releases.nixos.org/nixos/unstable/.../nixexprs.tar.xz` as a fact that tarball is very explicitly just the Nixpkgs source tree. This will give you teh same source as the nix way of building the system
+
+
 # Session from Online Video
 
 ## Introudction
@@ -116,12 +156,11 @@ Nix ix doing lazy evaluation. Which means: it sometimes wont access the variable
 
 ### List
 
-has `tail`, `head`, `length`. 
+has `tail`, `head`, `length`.
 
 Use `++` to conctenate list.
 
-Plese always add space ` x + 1 `, because nix allows the name like `x-1` as a variable name.
-
+Plese always add space `x + 1`, because nix allows the name like `x-1` as a variable name.
 
 ### map, filter, foldl' and friends
 
@@ -139,8 +178,7 @@ Plese always add space ` x + 1 `, because nix allows the name like `x-1` as a va
 
 ### The normal way: using nix-build and nix-shell
 
-
-The problem with docker is that, first, it seperates the environment, also every time you want to make change you will have to rebuild docker. 
+The problem with docker is that, first, it seperates the environment, also every time you want to make change you will have to rebuild docker.
 
 Here is an example of shell.nix that you can define
 
@@ -162,7 +200,7 @@ pkgs.mkShell {
 }
 ```
 
-You can use this to build tmux.  What is better compared to docker is that, when you want to rebuld the tool using bison instead of byacc, you can just redownload  package, and rebuild, But if you are using docker, then you will have to rebuild everything again.
+You can use this to build tmux. What is better compared to docker is that, when you want to rebuld the tool using bison instead of byacc, you can just redownload package, and rebuild, But if you are using docker, then you will have to rebuild everything again.
 
 Now you can smoothly transform from shell.nix to default.nix
 
@@ -193,10 +231,9 @@ pkgs.stdenv.mkDerivation {
 
 `nativeBuildInputs` are all the commands that you really use during the build process.
 
-
 And here is a even more beautiful thing, if you use `nix-shell`, and there is not `shell.nix`, it will actually read `default.nix`, and install all those nativeBuildInputs and buildInputs.
 
-So now we both have a development shell and a production deployment method. 
+So now we both have a development shell and a production deployment method.
 
 We can also write the following release.nix
 
@@ -237,7 +274,7 @@ in
 
 ```
 
-Then we can use `nix-build release.nix -A tmux` to build the nix from the attribute set returned. 
+Then we can use `nix-build release.nix -A tmux` to build the nix from the attribute set returned.
 
 We can further define the shell.nix as the following
 
@@ -245,14 +282,13 @@ We can further define the shell.nix as the following
 (import ./release.nix).devShell
 ```
 
-And your default.nix can be 
+And your default.nix can be
 
 ```nix
 (import ./release.nix).tmux
 ```
 
-We get the both of best worlds, we get a minium deployment way, and we can also have a development environment with tools installed. 
-
+We get the both of best worlds, we get a minium deployment way, and we can also have a development environment with tools installed.
 
 ### The flake way
 
