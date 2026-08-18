@@ -343,3 +343,127 @@ Use `nix develop` to enter into the development shell defined by flake.
 ### direnv
 
 Just use it....
+
+## How Nix builds: sandbox -> derivation -> hash -> store
+
+* Evaluations translate .nix expressions to .drv derivations
+* A derivation is a machine-readable recipe without dynamic types
+* A realized derivation results in a read-only output path with build products: /nix/store/<hash>-<packagename>
+
+The hash for build products, unlike docker, describes the input.
+
+### Inside the sandbox
+
+Suppose we have builder.sh as the following
+
+```bash
+echo "hello there" > $out
+```
+
+And we have the default.sh as the following
+
+```nix
+let
+  pkgs = import <nixpkgs> { };
+in
+derivation {
+  name = "myDerivation";
+  system = builtins.currentSystem;
+
+  builder = "${pkgs.bash}/bin/bash";
+  args = [ ./builder.sh ];
+
+}
+```
+
+
+If you type `echo ${nix-build}` you will see the message "hello there", this should be expected.
+
+`builtins.derivation` is the most fundemental function used to build drv. It has 4 parameters, name is just used as the name. system is just a tag of what this package is meant to be built on. builder here is spcified to bash because we need something to run the build command, and args can be a lot of commands to be executed inside the bash.
+
+The whole build process happens inside a sandbox. If you want to specify any env, you can add it inside derivation.
+
+Now look at this setup
+
+
+```nix
+let
+  pkgs = import <nixpkgs> { };
+in
+derivation {
+  name = "minimal-package";
+  system = builtins.currentSystem;
+
+  builder = "${pkgs.bash}/bin/bash";
+  args = [ ./builder.sh ];
+
+  COREUTILS = pkgs.coreutils;
+
+}
+```
+
+
+
+```bash
+declare -x
+
+echo "we are in $PWD"
+$COREUTILS/bin/ls -lsa
+
+echo "hello there" > $out
+
+```
+
+
+What would happen is nix saw that you are using a drv inside the input, so it will build it and put it in the Nixstore. The whole coreutils will be realized. 
+
+It is not surprising that the `ls` basically prints nothing.
+
+A better way of using ls is:
+```nix
+PATH = "${pkgs.coreutils}/bin";
+```
+
+To summarize, sandbox is basically purely detached from our environment, we cannot access any files or download from internet, we only have minimal POSIX environment.
+
+Also a trick to add some tool inside sandbox is using the following
+
+```nix
+PATH = pkgs.lib.makeBinPath [
+	pkgs.coreutils
+	pkgs.curl
+	pkgs.input
+];
+```
+
+### What is derivation
+`nix derivation show $(nix-instantiate  )` We can use this to showe that what drv is created.
+
+Here the `nix-instantiate` means it only creates the drv, not build it fully.
+
+
+
+### runtime dependencies
+
+By checking `ldd ./bin/xxx` we can see that the binary depends on some run-time environment. So if we directly copy this to another server without the run time environment, it would fail. 
+
+`nix-store --query --tree $(nix-build)` allows you to check the run time dependencies
+
+`nix-store --query --tree $(nix-instantiate)` allows you to check the compile time dependencies
+
+When closing down the sandbox, nix evaluates the hash and the original hash, and understand what are run-time dependencies. so Nix builds a closure for that program. 
+
+You can also use `nix-tree` which bascially shows everything in a more clear way.
+
+Another good command is `nix-diff` to check how two dependency trees are different.
+
+To copy closure: `nix copy --to ssh://server $(nix-build ...)` 
+
+`nix why-depends ./result /nix/store/...-glibc-...` tells you why ./result depends on this dependency
+
+### bad surprise
+Make a src folder if you can, otherwise you might copy something you dont want into sandbox. 
+
+A trap is copying the result file into the sandbox, now you have different has and no cache everything you rebuild....
+
+
