@@ -460,10 +460,104 @@ Another good command is `nix-diff` to check how two dependency trees are differe
 To copy closure: `nix copy --to ssh://server $(nix-build ...)` 
 
 `nix why-depends ./result /nix/store/...-glibc-...` tells you why ./result depends on this dependency
-
+[112;5u
 ### bad surprise
 Make a src folder if you can, otherwise you might copy something you dont want into sandbox. 
 
 A trap is copying the result file into the sandbox, now you have different has and no cache everything you rebuild....
+
+
+## Package software with stdenv.mkDerivation
+`stdenv.mkDerivation` is built on top of `builtins.derivation`. This is the method that we usually acutally use...
+
+Usually when you build an open source project from source, you first wget the tar.gz file, then you use tar xf to unzip it. Then you run `./configure`, `make`, `make test`, `make install` to install the software on your system. 
+
+```nix
+let
+  pkgs = import <nixpkgs> { };
+in
+pkgs.stdenv.mkDerivation {
+  name = "hello";
+  source = "./.";
+}
+```
+
+
+### What is behind stdenv.mkDerivation
+This whole process can be seen as magical, as we do not have gnumake, and if we dont archive it, it will still work, which means it automatically use `tar xf`. 
+
+The stdenv comes with the following dependencies by itself:
+* Bash
+* C compiler
+* coreutils
+* findutils
+* diffutils, patch
+* patchelf
+* awk grep sed
+* tar bzip2 gzip xz
+* Make
+
+And of course depencies are allowed to be inputed to mkDerivation
+* nativeBuildInputs  -> compile time deps
+* buildInputs -> run time deps
+* progagatedBuildInputs -> run time deps of scripts, useful for Python-like scripting language
+* checkInputs -> test deps, you can drop them if you are aiming at cross compilation
+
+Later this can be cross-compiled. 
+
+### stages
+* dontUnpack
+* dontPatch
+* dontConfigure
+* dontBuild
+* doCheck
+* dontIntall
+* dontFixup
+* doInstallCheck
+* doDist
+
+
+You can see that by default, Check stage, Install Check stage and Dist stage is disabled.
+
+
+### Hands on
+```nix
+let
+  pkgs = import <nixpkgs> { };
+in
+pkgs.stdenv.mkDerivation {
+  name = "hello";
+  src = ./hello-2.9.tar.gz;
+
+  nativeBuildInptus = [
+    pkgs.help2man
+  ];
+
+  patches = [
+    ./my.patch
+  ];
+
+  configPhase = ''
+    ./configure --prefix $out
+  '';
+
+  buildPhase = ''
+    make
+  '';
+
+  doCheck = false;
+  checkPhase = ''
+    make check
+  '';
+
+  installPhase = ''
+    make install
+  '';
+}
+```
+
+This shows a way I change the hello.c to print hello nixos, and I then can build from scratch this project. 
+
+What is exactly happening? So nix is actually doing a lot of bash shell scripting at the back and trying to detect whether some file exists in the project. If exists, it will try to run some command like `make` and `make install`. 
 
 
