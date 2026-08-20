@@ -561,3 +561,138 @@ This shows a way I change the hello.c to print hello nixos, and I then can build
 What is exactly happening? So nix is actually doing a lot of bash shell scripting at the back and trying to detect whether some file exists in the project. If exists, it will try to run some command like `make` and `make install`. 
 
 
+### Debugging the Nix builds
+`nix-build --keep-failed`: Will keep the env file and the source folder that might be damaged.
+
+`nix-build --debug`: This will print a lot more information about what is being built.
+
+`pkgs.breakpointHook` would freeze your drv, and let you attach to your sandbox.
+
+`set -x` can be added to PreConfigure phase, this might be a more straightforward way.z
+
+
+### Pinning nixpkgs
+If you open the nix repl and toString the nixpkgs, you will find a folder on the os. 
+
+To make nix expressions build forever, it is possible to pin all the inputs. 
+
+nix supports output-address, like `fetchurl`, `fetchTarball`, inputs my varied, output is fixed, network allowed in the network.
+
+There are some tools that allow you to do that too. `niv`, `npins`, `nixtamal`. Compared to `flake`, they may have other advantages.
+
+Let's try nitamal.
+
+```bash
+nix-shell -p nix-tamal
+
+nixtamal set-up #this step will fetch another tarball of source so it might take some 
+```
+
+Now you can modify the default.nix using this 
+
+```nix
+let
+  sources = import ./nix/tamal { };
+  pkgs = import sources.nixpkgs { };
+```
+
+### Fetching url
+In the following instead of we providing the source code, we provide a link to fetch the tarball.
+
+But something to be noticed here, first url can be a list, which means that you can add mirror.
+
+Secondly, the nix only checks the hash to make sure it is the same directory, so if you dont change the has and just change the url, nix will choose not to connect to the Internet.
+
+```nix
+  name = "hello-2";
+  src = pkgs.fetchurl {
+    url = "https://gnu.mirror.constant.com/hello/hello-2.9.tar.gz";
+    hash = "sha256-7Lt6IhQZbFf/k0CqcUWOFVmr049tjRaWZoRpNd8ZHqc=";
+  };
+```
+
+
+There are many more fetches
+
+`fetchzip` will auto unpack
+`fetchpatch` will normalize patch
+`fetchgipt` supports submodules
+
+`nix-prefetch-git/url` will put something in the NixStore, and you can check the information, this is gery good for large downloads.
+
+
+### Language-specific builders
+
+Languge-specific builders are one level higher abstraction compared to stdenv.mkDerivation. 
+
+Just read the nixpkgs manual, I think you can find the necessary options, like `buildPythonPackage`, `buildPythonApplication`
+
+### Build Helpers
+Build Helpers are wrapper function around mkDerivation that are helpful for recurring tasks like the following
+* Create a preconfigured nix shell
+* Running simple scripts to generate package outputs
+* Creating prepackages standalond script
+* Creating text files
+* Batch-Symlinking of scattered paths
+
+
+`pkgs.mkShell`: Create a development shell
+
+```nix
+let 
+	pkgs = import <nixpkgs> {};
+	myPython = pkgs.python313.withPackages (ps: with ps; [flask numpy requests]);
+in
+	pkgs.mkShell {
+		packages = [
+			myPython;
+			pkgs.python312.pkgs.black
+			pkgs.python314.pkgs.mypy
+		];
+	}
+```
+
+
+
+`pkgs.runCommand`: fetch some environment, and run some command to the output. Very flexible and useful commands.
+
+
+```nix
+let
+	pkgs = import <nixpkgs> {};
+	env = {
+		nativeBuildInputs = [ pkgs.cowsay ];
+	};
+in
+pkgs.runCommand "cowsay-output" env ''
+find "${pkgs.cowsay}/share/cowsay/cows" \
+-name "*.cow" \
+-exec cowsay -f {} "Hello Nix Users" >> $out \;
+''
+```
+
+
+`pkgs.writeShellApplication`: What it does is to grab the environment, then build a kind of shell application using the text
+
+
+```nix
+pkgs.writeShellApplication {
+	name = "show-nixos-org";
+	
+	runtimeInputs = with pkgs; [ curl w3m ];
+	
+	text = ''
+		curl -s 'https://nixos.org | w3m -dump -T text/html
+	'';
+}
+```
+
+`pkgs.synlinkJoin`: Just take all the bin folders and expose them as one folder
+
+```nix
+pkgs.symlinkJoin {
+	name = "myFavouriteApps";
+	paths = with pkgs; [ hello cowsay fortune ];
+}
+```
+
