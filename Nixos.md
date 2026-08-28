@@ -76,6 +76,32 @@ It contains type, class, bascially telling you that "I am the configuration of n
 You should use `https://releases.nixos.org/nixos/unstable/.../nixexprs.tar.xz` as a fact that tarball is very explicitly just the Nixpkgs source tree. This will give you teh same source as the nix way of building the system
 
 
+## Session 3
+Why should you use nixos-rebuild build/boot? Because you technically cannot really switch a running kernel.
+
+Question: I am only updating the nixpkgs by a small version, why does it download 4GB of data?
+
+Answer: it is all the renewed build recipe,(like commit etc, not really derivation though) when you are doing flake uipdate, and nix does not patch your system. it is more likely completely copy something into the nixstore. 
+
+`nh os test .#golden` build and acitvate the new configuration
+
+What does <pkgs> refer to? it refers to `nixosConfiguration.host.pkgs`. Also, `nixosConfiguration.host.config.nixpkgs.pkgs` is supposed to be an empty attribute set unless we provide one. 
+
+Strage thing we met, command not found is not available. THe reason is that we are using a very new channel that is not a release branch.
+
+`nh os build-vm -r .` will be my new friend everytime I made change to the config.
+
+One thing about the vm, it sets a weird default password.
+
+```nix
+virtualisation.vmVariant = {
+	users.users.lzabry.initialPassword="";
+};
+```
+
+
+
+
 # Session from Online Video
 
 ## Introudction
