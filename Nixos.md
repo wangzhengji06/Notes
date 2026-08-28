@@ -722,3 +722,29 @@ pkgs.symlinkJoin {
 }
 ```
 
+
+
+## Composing nixpkgs
+
+We need to modularize the project structure, because if we build a lot of small sandboxes instead of a large everything sandbox, then we enjoy better build speed when we modify something.  
+
+
+### Call Package Pattern
+Here is an example of ./a/default.nix
+
+```nix
+{ stdenv, boost, openssl, withFeatureX ? false}:
+
+stdenv.mkDerivation {
+	name = "my-app";
+	src = ./.;
+	buildInputs = [
+		boost	
+		openssl	
+	];
+#...
+}
+```
+
+Usage: pkgs.callPackage ./a/default.nix
+
