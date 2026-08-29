@@ -40,7 +40,7 @@ make use of `git add -p`
 
 ### Make the output of flake the instantiation of the configuration
 
-cli can take any attrpath of the output of the flake. You can use whatever the form you like, but usually people like to do `nixosConiguration.hostname` because it is expected. 
+cli can take any attrpath of the output of the flake. You can use whatever the form you like, but usually people like to do `nixosConiguration.hostname` because it is expected.
 
 The result of the flake will be a `nixosConfiguration`.
 
@@ -61,31 +61,33 @@ flake is pure, so cannot use something like `builtin.currentSystem` etc....
 A good part about flake is you get the evaluation cache. You also control the source.
 
 ### Git worktree and bare repo
-A bare repo means that you only get the .git file. Worktree is a seperate directory where one branch is checked out, while still sharing the same .git.
-Here a useful alias is `clone --bare --config remote.origin.fetch=+refs/heads/*:refs/remotes/origin/*` 
 
+A bare repo means that you only get the .git file. Worktree is a seperate directory where one branch is checked out, while still sharing the same .git.
+Here a useful alias is `clone --bare --config remote.origin.fetch=+refs/heads/*:refs/remotes/origin/*`
 
 ### Nixos module system
-The modules attr name, can accept function / attrset, or string like patterns. The reason why we directly pass the path string to module list is because, it allows to generate a key that is  to avoid deduplicate the module import.
+
+The modules attr name, can accept function / attrset, or string like patterns. The reason why we directly pass the path string to module list is because, it allows to generate a key that is to avoid deduplicate the module import.
 
 After I evaluate the configuration.nix, the NixOS module system loads it, calls it with module arguments like config, lib, and pkgs, and gets back a module attrset, I got to see that it returns a attrset. Then attrset is evaluated using the lib.evalModules.
 
 It contains type, class, bascially telling you that "I am the configuration of nixos". config is the value of the options, it is also the result of evaluation. pkgs is the instance of the nix packages used here.
 
 ### Why is my build different than your build?
+
 You should use `https://releases.nixos.org/nixos/unstable/.../nixexprs.tar.xz` as a fact that tarball is very explicitly just the Nixpkgs source tree. This will give you teh same source as the nix way of building the system
 
-
 ## Session 3
+
 Why should you use nixos-rebuild build/boot? Because you technically cannot really switch a running kernel.
 
 Question: I am only updating the nixpkgs by a small version, why does it download 4GB of data?
 
-Answer: it is all the renewed build recipe,(like commit etc, not really derivation though) when you are doing flake uipdate, and nix does not patch your system. it is more likely completely copy something into the nixstore. 
+Answer: it is all the renewed build recipe,(like commit etc, not really derivation though) when you are doing flake uipdate, and nix does not patch your system. it is more likely completely copy something into the nixstore.
 
 `nh os test .#golden` build and acitvate the new configuration
 
-What does <pkgs> refer to? it refers to `nixosConfiguration.host.pkgs`. Also, `nixosConfiguration.host.config.nixpkgs.pkgs` is supposed to be an empty attribute set unless we provide one. 
+What does <pkgs> refer to? it refers to `nixosConfiguration.host.pkgs`. Also, `nixosConfiguration.host.config.nixpkgs.pkgs` is supposed to be an empty attribute set unless we provide one.
 
 Strage thing we met, command not found is not available. THe reason is that we are using a very new channel that is not a release branch.
 
@@ -99,8 +101,7 @@ virtualisation.vmVariant = {
 };
 ```
 
-
-
+`inherit (person) name age;` is equla to `name = person.name; age = person.age;`
 
 # Session from Online Video
 
@@ -372,9 +373,9 @@ Just use it....
 
 ## How Nix builds: sandbox -> derivation -> hash -> store
 
-* Evaluations translate .nix expressions to .drv derivations
-* A derivation is a machine-readable recipe without dynamic types
-* A realized derivation results in a read-only output path with build products: /nix/store/<hash>-<packagename>
+- Evaluations translate .nix expressions to .drv derivations
+- A derivation is a machine-readable recipe without dynamic types
+- A realized derivation results in a read-only output path with build products: /nix/store/<hash>-<packagename>
 
 The hash for build products, unlike docker, describes the input.
 
@@ -402,7 +403,6 @@ derivation {
 }
 ```
 
-
 If you type `echo ${nix-build}` you will see the message "hello there", this should be expected.
 
 `builtins.derivation` is the most fundemental function used to build drv. It has 4 parameters, name is just used as the name. system is just a tag of what this package is meant to be built on. builder here is spcified to bash because we need something to run the build command, and args can be a lot of commands to be executed inside the bash.
@@ -410,7 +410,6 @@ If you type `echo ${nix-build}` you will see the message "hello there", this sho
 The whole build process happens inside a sandbox. If you want to specify any env, you can add it inside derivation.
 
 Now look at this setup
-
 
 ```nix
 let
@@ -428,8 +427,6 @@ derivation {
 }
 ```
 
-
-
 ```bash
 declare -x
 
@@ -440,12 +437,12 @@ echo "hello there" > $out
 
 ```
 
-
-What would happen is nix saw that you are using a drv inside the input, so it will build it and put it in the Nixstore. The whole coreutils will be realized. 
+What would happen is nix saw that you are using a drv inside the input, so it will build it and put it in the Nixstore. The whole coreutils will be realized.
 
 It is not surprising that the `ls` basically prints nothing.
 
 A better way of using ls is:
+
 ```nix
 PATH = "${pkgs.coreutils}/bin";
 ```
@@ -463,40 +460,41 @@ PATH = pkgs.lib.makeBinPath [
 ```
 
 ### What is derivation
+
 `nix derivation show $(nix-instantiate  )` We can use this to showe that what drv is created.
 
 Here the `nix-instantiate` means it only creates the drv, not build it fully.
 
-
-
 ### runtime dependencies
 
-By checking `ldd ./bin/xxx` we can see that the binary depends on some run-time environment. So if we directly copy this to another server without the run time environment, it would fail. 
+By checking `ldd ./bin/xxx` we can see that the binary depends on some run-time environment. So if we directly copy this to another server without the run time environment, it would fail.
 
 `nix-store --query --tree $(nix-build)` allows you to check the run time dependencies
 
 `nix-store --query --tree $(nix-instantiate)` allows you to check the compile time dependencies
 
-When closing down the sandbox, nix evaluates the hash and the original hash, and understand what are run-time dependencies. so Nix builds a closure for that program. 
+When closing down the sandbox, nix evaluates the hash and the original hash, and understand what are run-time dependencies. so Nix builds a closure for that program.
 
 You can also use `nix-tree` which bascially shows everything in a more clear way.
 
 Another good command is `nix-diff` to check how two dependency trees are different.
 
-To copy closure: `nix copy --to ssh://server $(nix-build ...)` 
+To copy closure: `nix copy --to ssh://server $(nix-build ...)`
 
 `nix why-depends ./result /nix/store/...-glibc-...` tells you why ./result depends on this dependency
 [112;5u
+
 ### bad surprise
-Make a src folder if you can, otherwise you might copy something you dont want into sandbox. 
+
+Make a src folder if you can, otherwise you might copy something you dont want into sandbox.
 
 A trap is copying the result file into the sandbox, now you have different has and no cache everything you rebuild....
 
-
 ## Package software with stdenv.mkDerivation
+
 `stdenv.mkDerivation` is built on top of `builtins.derivation`. This is the method that we usually acutally use...
 
-Usually when you build an open source project from source, you first wget the tar.gz file, then you use tar xf to unzip it. Then you run `./configure`, `make`, `make test`, `make install` to install the software on your system. 
+Usually when you build an open source project from source, you first wget the tar.gz file, then you use tar xf to unzip it. Then you run `./configure`, `make`, `make test`, `make install` to install the software on your system.
 
 ```nix
 let
@@ -508,45 +506,47 @@ pkgs.stdenv.mkDerivation {
 }
 ```
 
-
 ### What is behind stdenv.mkDerivation
-This whole process can be seen as magical, as we do not have gnumake, and if we dont archive it, it will still work, which means it automatically use `tar xf`. 
+
+This whole process can be seen as magical, as we do not have gnumake, and if we dont archive it, it will still work, which means it automatically use `tar xf`.
 
 The stdenv comes with the following dependencies by itself:
-* Bash
-* C compiler
-* coreutils
-* findutils
-* diffutils, patch
-* patchelf
-* awk grep sed
-* tar bzip2 gzip xz
-* Make
+
+- Bash
+- C compiler
+- coreutils
+- findutils
+- diffutils, patch
+- patchelf
+- awk grep sed
+- tar bzip2 gzip xz
+- Make
 
 And of course depencies are allowed to be inputed to mkDerivation
-* nativeBuildInputs  -> compile time deps
-* buildInputs -> run time deps
-* progagatedBuildInputs -> run time deps of scripts, useful for Python-like scripting language
-* checkInputs -> test deps, you can drop them if you are aiming at cross compilation
 
-Later this can be cross-compiled. 
+- nativeBuildInputs -> compile time deps
+- buildInputs -> run time deps
+- progagatedBuildInputs -> run time deps of scripts, useful for Python-like scripting language
+- checkInputs -> test deps, you can drop them if you are aiming at cross compilation
+
+Later this can be cross-compiled.
 
 ### stages
-* dontUnpack
-* dontPatch
-* dontConfigure
-* dontBuild
-* doCheck
-* dontIntall
-* dontFixup
-* doInstallCheck
-* doDist
 
+- dontUnpack
+- dontPatch
+- dontConfigure
+- dontBuild
+- doCheck
+- dontIntall
+- dontFixup
+- doInstallCheck
+- doDist
 
 You can see that by default, Check stage, Install Check stage and Dist stage is disabled.
 
-
 ### Hands on
+
 ```nix
 let
   pkgs = import <nixpkgs> { };
@@ -582,12 +582,12 @@ pkgs.stdenv.mkDerivation {
 }
 ```
 
-This shows a way I change the hello.c to print hello nixos, and I then can build from scratch this project. 
+This shows a way I change the hello.c to print hello nixos, and I then can build from scratch this project.
 
-What is exactly happening? So nix is actually doing a lot of bash shell scripting at the back and trying to detect whether some file exists in the project. If exists, it will try to run some command like `make` and `make install`. 
-
+What is exactly happening? So nix is actually doing a lot of bash shell scripting at the back and trying to detect whether some file exists in the project. If exists, it will try to run some command like `make` and `make install`.
 
 ### Debugging the Nix builds
+
 `nix-build --keep-failed`: Will keep the env file and the source folder that might be damaged.
 
 `nix-build --debug`: This will print a lot more information about what is being built.
@@ -596,11 +596,11 @@ What is exactly happening? So nix is actually doing a lot of bash shell scriptin
 
 `set -x` can be added to PreConfigure phase, this might be a more straightforward way.z
 
-
 ### Pinning nixpkgs
-If you open the nix repl and toString the nixpkgs, you will find a folder on the os. 
 
-To make nix expressions build forever, it is possible to pin all the inputs. 
+If you open the nix repl and toString the nixpkgs, you will find a folder on the os.
+
+To make nix expressions build forever, it is possible to pin all the inputs.
 
 nix supports output-address, like `fetchurl`, `fetchTarball`, inputs my varied, output is fixed, network allowed in the network.
 
@@ -611,10 +611,10 @@ Let's try nitamal.
 ```bash
 nix-shell -p nix-tamal
 
-nixtamal set-up #this step will fetch another tarball of source so it might take some 
+nixtamal set-up #this step will fetch another tarball of source so it might take some
 ```
 
-Now you can modify the default.nix using this 
+Now you can modify the default.nix using this
 
 ```nix
 let
@@ -623,6 +623,7 @@ let
 ```
 
 ### Fetching url
+
 In the following instead of we providing the source code, we provide a link to fetch the tarball.
 
 But something to be noticed here, first url can be a list, which means that you can add mirror.
@@ -637,7 +638,6 @@ Secondly, the nix only checks the hash to make sure it is the same directory, so
   };
 ```
 
-
 There are many more fetches
 
 `fetchzip` will auto unpack
@@ -646,26 +646,26 @@ There are many more fetches
 
 `nix-prefetch-git/url` will put something in the NixStore, and you can check the information, this is gery good for large downloads.
 
-
 ### Language-specific builders
 
-Languge-specific builders are one level higher abstraction compared to stdenv.mkDerivation. 
+Languge-specific builders are one level higher abstraction compared to stdenv.mkDerivation.
 
 Just read the nixpkgs manual, I think you can find the necessary options, like `buildPythonPackage`, `buildPythonApplication`
 
 ### Build Helpers
-Build Helpers are wrapper function around mkDerivation that are helpful for recurring tasks like the following
-* Create a preconfigured nix shell
-* Running simple scripts to generate package outputs
-* Creating prepackages standalond script
-* Creating text files
-* Batch-Symlinking of scattered paths
 
+Build Helpers are wrapper function around mkDerivation that are helpful for recurring tasks like the following
+
+- Create a preconfigured nix shell
+- Running simple scripts to generate package outputs
+- Creating prepackages standalond script
+- Creating text files
+- Batch-Symlinking of scattered paths
 
 `pkgs.mkShell`: Create a development shell
 
 ```nix
-let 
+let
 	pkgs = import <nixpkgs> {};
 	myPython = pkgs.python313.withPackages (ps: with ps; [flask numpy requests]);
 in
@@ -678,10 +678,7 @@ in
 	}
 ```
 
-
-
 `pkgs.runCommand`: fetch some environment, and run some command to the output. Very flexible and useful commands.
-
 
 ```nix
 let
@@ -697,16 +694,14 @@ find "${pkgs.cowsay}/share/cowsay/cows" \
 ''
 ```
 
-
 `pkgs.writeShellApplication`: What it does is to grab the environment, then build a kind of shell application using the text
-
 
 ```nix
 pkgs.writeShellApplication {
 	name = "show-nixos-org";
-	
+
 	runtimeInputs = with pkgs; [ curl w3m ];
-	
+
 	text = ''
 		curl -s 'https://nixos.org | w3m -dump -T text/html
 	'';
@@ -722,14 +717,12 @@ pkgs.symlinkJoin {
 }
 ```
 
-
-
 ## Composing nixpkgs
 
-We need to modularize the project structure, because if we build a lot of small sandboxes instead of a large everything sandbox, then we enjoy better build speed when we modify something.  
-
+We need to modularize the project structure, because if we build a lot of small sandboxes instead of a large everything sandbox, then we enjoy better build speed when we modify something.
 
 ### Call Package Pattern
+
 Here is an example of ./a/default.nix
 
 ```nix
@@ -739,8 +732,8 @@ stdenv.mkDerivation {
 	name = "my-app";
 	src = ./.;
 	buildInputs = [
-		boost	
-		openssl	
+		boost
+		openssl
 	];
 #...
 }
@@ -748,3 +741,263 @@ stdenv.mkDerivation {
 
 Usage: pkgs.callPackage ./a/default.nix
 
+An example would be the following default.nix:
+
+```nix
+{ stdenv, fetchzip, help2man }:
+
+stdenv.mkDerivation {
+  name = "hello";
+
+  src = fetchzip {
+    url = "https://gnu.mirror.constant.com/hello/hello-2.9.tar.gz";
+    sha256 = "sha256-1aFStdB6F9qR8hch6QTZZQm5rgEhh1SbNIfFs61FsK8=";
+  };
+
+  patches = [
+    ./hello-nix.patch
+  ];
+
+  nativeBuildInputs = [
+    help2man
+  ];
+}
+```
+
+Question: Where did I get the stdenv, fetchzip and help2man from?
+
+You use the call Package pattern, by using a release.nix to call
+
+```nix
+let
+	source  = improt ./nix/tamal {};
+	pkgs = import sources.nixpkgs {};
+	hello-gcc = pkgs.callPackage ./default.nix {};
+in
+{
+	inherit hello-gcc;
+	hello-clang = hello-gcc.override{
+	stdenv = pkgs.clangStdenv;
+	};
+
+	hello-arm = pkgs.pkgsCross.aarch64-multiplatform.callPackage ./default.nix {}
+}
+```
+
+Now you can use `nix build release.nix -A hello-gcc / hello=clang`.
+
+You can even cross-compile the program into arm system. Aren't you surprised? you should be
+
+### How callPackage works
+
+You can test it in nix repl.
+
+```nix
+cp = pkgs.lib.callPackage {a = 1; b = 10; c = 100;}
+
+# cp kind of knows like hey I have these values, if you give me a function I can plug in.
+
+f = {a , b} : a + b
+
+cp f {} # would evaluate to 11
+
+cp {{a, d}: a + d} {d = 1000;} # would evaluate to 1001
+
+```
+
+This is not really that interesting
+
+```nix
+f = {  x , y, z}: {result = x + y + z;}
+
+myCallPackage = pkgs.lib.callPackageWith { x = 1; y = 10;}
+
+foo = myCallPackage f {z = 100;}
+
+foo.result
+
+(foo.override {x = 2;}).result;
+
+```
+
+This is a core pattern. foo here rememebrs everything we have called and remembered the values.
+
+### The user of override
+
+Here is an example of what usePackager with override gives you
+
+```nix
+let pkgs = improt <nixpkgs> {};
+	a = pkgs.callPackage ./a/default.nix {};
+in
+{
+	inherit a;
+
+	a-static = a.override {
+		staticBuild = true;
+		openssl = pkgs.openssl.override {static = true};
+	};
+
+	a-patchedversion = a.overrideAttrs (oldAttrs: {
+		patches = oldAttrs.patches or [] ++ [
+			./patches/specialstuff.patch
+		];
+	});
+}
+```
+
+The override just taks an attrset as an argument, while the overrideAttrs taks a high level function that wors on a specific values?
+
+So this is confusing, right? When to use what?
+
+override changes the input of the callPackags, like stdenv, packageA, packageB. overrideAttrs change the things inside stdenv.mkDerivation!
+
+And inside release.nix
+
+```nix
+{
+	package1 = ...;
+	package2 = ...;
+	package3 = ...;
+}
+
+```
+
+`nix-build release.nix` will build all the derivations. `nix-build release.nix -A package2` will only build package 2 as a derivaiton.
+
+When you are using attrset overrides, a good pattern is always to use `old.xxx or [] ++ [pkgs.help2man]`. You do not want destructive rebuild, correct?
+
+`pkgs.lib.optional true xxx` would return the list with xxx in it, while `pkgs.lib.optional false xxx` would return an empty list.
+
+`pkgs.lib.optionals` is another method that returns the list because it also takes the list.
+
+
+### Anti-Patterns
+
+```nix
+with import <nixpkgs> {};
+with lib;
+
+stdenv.MkDerivaiton[I {
+	buildInputs = foo [a b c ];
+}
+```
+
+Bad, name could clash, I dont know function used later is belong to what.
+
+
+```nix
+let 
+	pkgs = import <nixpkgs> {};
+	inherit (pkgs) stdenv a b c;
+	inherit (pkgs.lib) foo;
+in
+stdenv.MkDerivaiton[I {
+	buildInputs = foo [a b c ];
+}
+```
+
+
+Good, name is clear where it is from.
+
+
+```nix
+rec {
+	x = 1;
+	y = 2;
+	z = x + y;
+}
+```
+
+Bad, pointless.
+
+```nix
+let 
+	x = 1;
+	y = 2;
+in
+{
+	inherit x, y;
+	z = x + y;
+}
+```
+
+Good, very clean. Imagin doing this in a 500 lines of attrset, you will understand rec can bring chaos.
+
+
+```nix
+stdenv.mkDerivation rec{
+	name = "bla";
+	version = "1.2.3";
+	
+	src = someFetcher {
+		url = "...${name}...${version}...";
+		hash = "...";
+	}
+}
+```
+
+Surprisingly if you try to overrwrite the version, it does not change url
+
+
+```nix
+stdenv.mkDerivation (finalAttrs: {
+  pname = "bla";
+  version = "1.2.3";
+
+  src = someFetcher {
+    url = "...${finalAttrs.pname}...${finalAttrs.version}...";
+    hash = "...";
+  };
+})
+```
+
+Good, override will work. 
+
+Only have one nixpkgs import.
+
+Dont directly overwrite the whole phase, remember to add prehook and posthook. 
+
+Avoid nested packages call as it will create a lot of overrides.
+
+
+### Import from Derivaiton
+
+This is probably an anti-pattern. Mighty but with tradeoffs.
+
+What it does is first use a nix to generate a nix file, then use another file to callPackages on the generated nix file.
+
+```nix
+# default.nix
+
+let
+  pkgs = import <nixpkgs> {};
+  hello = pkgs.callPackage ./generate-nix-expr.nix {};
+in
+pkgs.callPackage "${hello}/hello.nix" {}
+```
+
+```nix
+# generate-nix-expr.nix
+
+{ runCommand }:
+
+runCommand "gen-nix-expr" {} ''
+  mkdir $out
+
+  echo "generating nix expression"
+  sleep 6 # simulate slow generation
+
+  cat << EOF > $out/hello.nix
+
+{ stdenv, hello }:
+stdenv.mkDerivation {
+  name = "hello2";
+  src = hello.src;
+}
+
+EOF
+```
+
+
+The bad part is, a relevant change to the generator produces a new derivation/store location, even when executing that derivation ultimately generates the same file contents.
