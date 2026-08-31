@@ -103,6 +103,76 @@ virtualisation.vmVariant = {
 
 `inherit (person) name age;` is equla to `name = person.name; age = person.age;`
 
+## Session 4
+
+### Options and Config
+Check the home-manager/modules/nushell.nix. It will show you the module can declare options and provide config as the value.
+
+### Homemanager
+Nixos and homemanager does not share the same modules. Home manager has more user-related programs.
+
+It is more convenient to use homemanager in a NixOS module instead of using the `evalxxx`, if you are on nixos.
+
+The homemanager import the nixos module which injects the `homemanager.users` options, and we can provide the value for that option. 
+
+We are basically providing a a Home Manager module function.
+
+In the configuration.nix, I need to refer to a package I enabled in home manager. I can use `config.home-manager.users.lzabry.programs.nushell.package`; 
+
+### Git Workflow
+
+After creating a new file using `git add -N`, you can view change `git diff`.
+
+But suppose that you want to stash those changes, what to do? `git reset` unstage files but kept the change.
+
+Then you can do your `git stash push -u`. this will allow you to stash the newly added file also.
+
+You can use `git clean -i`  to remove stuff also.
+ 
+`git stash push -p` what hunk should go inside. This is really good before you are trying to make commit.
+
+`git commit --amend -m "qemu virtio-vga-gl"` allows us to change the last commit message and recommit
+
+`git restore -p` allow you to choose what hunk to recover.
+
+Confusing parts: 
+The beginning is that we met an error in home.nix but we do not have diagnostic inline.
+So we modified the nixvim.nix to make it has that function.
+Then,
+1. I did nh os test using the new nixvim config.
+2. We accidentally? git stash pop everything, which inlcudes home.nix as well as configuration.nix.
+3. So we use git stash push -p and restash the neovim. Then we actually test to see how neovim is working after the nixvim config change.
+4. It actually works, but teh weird thing is some count number is not rendered. so we use git stash push -u
+5. Then we do a git stash list, and pop the stash at 1. And check the neovim config again.
+6. We decide to give up and think this version is good enough. We do git add . and commit.
+
+### The most tricky part -> make nixvim a standalone flake output
+I want `packages.x86_64-linux.pug` to be a package. And since I am directly defining it as `(import ./nixvim.nix inputs).config.build.package`, then `nixvim.nix` 's output is just the built package.
+
+Very confusingly, I need to somehow include the nixvim package in my user home right? I can add to packages as `inputs.self.packages.x86_64-linux.pug`. What is going on here? flake exposes the output through `inputs.self`, here the flake.nix already uses inputs, so configuration.nix also has inputs. 
+
+We dont want the imported things as a binding, we want a direct built packages using `evalNixvim`
+
+
+### Others
+Currently I have met Nixos Module, Nixvim Module, Homemanager module would also be a different kind of module.
+They all use wrapper of lib.evalModules, using something like `evalNixos`, `evalNixvim` etc..
+
+There are two kinds of fetchers. `builtins.fetchTarball` will return a nixstore path that contains the source file. On the other hand, `fetchfromGithub` will return a derivation.
+
+
+Avoid build from derivation pattern: Something from a realization, occured during evaluation, is used again in that derivation. This is known as the inehrit from derivation pattern.
+
+
+### Homeworks
+
+1. Get familiar with the keybinding for daignostic 
+2. Understand why does count not work
+3. Start a pull request for the home manager
+4. Read the dedentric pattern.
+
+
+
 # Session from Online Video
 
 ## Introudction
