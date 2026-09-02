@@ -1071,3 +1071,90 @@ EOF
 
 
 The bad part is, a relevant change to the generator produces a new derivation/store location, even when executing that derivation ultimately generates the same file contents.
+
+## Advanced Packaging topics
+### Source filtering with lib.fileset
+
+Here is a bad example.
+```nix
+stdenv.mkDerivation {
+	pname = "bla";
+	
+	src = ./.;
+	
+	#...
+}
+```
+
+Everything inside the src folder will be copied to Nix Store.
+
+With source filters, we have more cache hits, and fewer rebuilds, and finally fewer and smaller sources copies into the nix store.
+
+1. Solution 1
+```nix
+src = pkgs.lib.cleanSource ./.;
+```
+This will clean symlink, .o etc...
+
+
+2. Solution 2
+```nix
+src = lib.cleanSourceWith {
+	filter = path: _type: !lib.hasSuffix ".nix" path;
+	src = lib.cleanSource ./.;
+};
+```
+This filters out all the nix file, and when we are inside sandbox nix files are indeed not needed.
+
+3. Standard
+```nix
+src = lib.fileset.toSource {
+	root = ./.;
+	fileset = lib.fileset.unions [
+	./include
+	./test
+	./example
+	./CMakeLists.txt
+	./pkg-config.pc.cmake
+	];
+};
+```
+This defines all the files union that you actually want.
+
+
+4. Only Copy source files with certain file type
+```nix
+let
+	fs = lib.fileset;
+	extensionOf = extensions: file: 
+		builtins.any file.hasExt extensions;
+in
+fs.toSource {
+	root = ./.;
+	fileset = fs.unions [
+		./.latexmkrc
+		(fs.Filefilter (extensionsOf [ "jpg" "pdf" "png" "tex"]) ./.)
+	];
+}
+```
+
+
+5. Subtract one file list from the other
+```nix
+let
+	fs = lib.fileset;
+	nixFiles = fs.fileFilter (file: file.hasExt "nix") ./.;
+in
+fs.toSource {
+	root = ./.;
+	fileset = fs.difference (fs.gitTracked ./.) nixFiles;
+}
+```
+
+If you dont understand why some source files are not included, or included, you can use the following command
+```nix
+lib.fileset.traceVal
+```
+
+But if you start debugging it, it might be a sign that you are doing something too complex already...
+
