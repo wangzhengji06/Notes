@@ -106,18 +106,20 @@ virtualisation.vmVariant = {
 ## Session 4
 
 ### Options and Config
+
 Check the home-manager/modules/nushell.nix. It will show you the module can declare options and provide config as the value.
 
 ### Homemanager
+
 Nixos and homemanager does not share the same modules. Home manager has more user-related programs.
 
 It is more convenient to use homemanager in a NixOS module instead of using the `evalxxx`, if you are on nixos.
 
-The homemanager import the nixos module which injects the `homemanager.users` options, and we can provide the value for that option. 
+The homemanager import the nixos module which injects the `homemanager.users` options, and we can provide the value for that option.
 
 We are basically providing a a Home Manager module function.
 
-In the configuration.nix, I need to refer to a package I enabled in home manager. I can use `config.home-manager.users.lzabry.programs.nushell.package`; 
+In the configuration.nix, I need to refer to a package I enabled in home manager. I can use `config.home-manager.users.lzabry.programs.nushell.package`;
 
 ### Git Workflow
 
@@ -127,18 +129,19 @@ But suppose that you want to stash those changes, what to do? `git reset` unstag
 
 Then you can do your `git stash push -u`. this will allow you to stash the newly added file also.
 
-You can use `git clean -i`  to remove stuff also.
- 
+You can use `git clean -i` to remove stuff also.
+
 `git stash push -p` what hunk should go inside. This is really good before you are trying to make commit.
 
 `git commit --amend -m "qemu virtio-vga-gl"` allows us to change the last commit message and recommit
 
 `git restore -p` allow you to choose what hunk to recover.
 
-Confusing parts: 
+Confusing parts:
 The beginning is that we met an error in home.nix but we do not have diagnostic inline.
 So we modified the nixvim.nix to make it has that function.
 Then,
+
 1. I did nh os test using the new nixvim config.
 2. We accidentally? git stash pop everything, which inlcudes home.nix as well as configuration.nix.
 3. So we use git stash push -p and restash the neovim. Then we actually test to see how neovim is working after the nixvim config change.
@@ -147,31 +150,28 @@ Then,
 6. We decide to give up and think this version is good enough. We do git add . and commit.
 
 ### The most tricky part -> make nixvim a standalone flake output
+
 I want `packages.x86_64-linux.pug` to be a package. And since I am directly defining it as `(import ./nixvim.nix inputs).config.build.package`, then `nixvim.nix` 's output is just the built package.
 
-Very confusingly, I need to somehow include the nixvim package in my user home right? I can add to packages as `inputs.self.packages.x86_64-linux.pug`. What is going on here? flake exposes the output through `inputs.self`, here the flake.nix already uses inputs, so configuration.nix also has inputs. 
+Very confusingly, I need to somehow include the nixvim package in my user home right? I can add to packages as `inputs.self.packages.x86_64-linux.pug`. What is going on here? flake exposes the output through `inputs.self`, here the flake.nix already uses inputs, so configuration.nix also has inputs.
 
 We dont want the imported things as a binding, we want a direct built packages using `evalNixvim`
 
-
 ### Others
+
 Currently I have met Nixos Module, Nixvim Module, Homemanager module would also be a different kind of module.
 They all use wrapper of lib.evalModules, using something like `evalNixos`, `evalNixvim` etc..
 
 There are two kinds of fetchers. `builtins.fetchTarball` will return a nixstore path that contains the source file. On the other hand, `fetchfromGithub` will return a derivation.
 
-
 Avoid build from derivation pattern: Something from a realization, occured during evaluation, is used again in that derivation. This is known as the inehrit from derivation pattern.
-
 
 ### Homeworks
 
-1. Get familiar with the keybinding for daignostic 
+1. Get familiar with the keybinding for daignostic
 2. Understand why does count not work
 3. Start a pull request for the home manager
 4. Read the dedentric pattern.
-
-
 
 # Session from Online Video
 
@@ -892,7 +892,7 @@ foo.result
 
 This is a core pattern. foo here rememebrs everything we have called and remembered the values.
 
-### The user of override
+### The use of override
 
 Here is an example of what usePackager with override gives you
 
@@ -941,7 +941,6 @@ When you are using attrset overrides, a good pattern is always to use `old.xxx o
 
 `pkgs.lib.optionals` is another method that returns the list because it also takes the list.
 
-
 ### Anti-Patterns
 
 ```nix
@@ -955,9 +954,8 @@ stdenv.MkDerivaiton[I {
 
 Bad, name could clash, I dont know function used later is belong to what.
 
-
 ```nix
-let 
+let
 	pkgs = import <nixpkgs> {};
 	inherit (pkgs) stdenv a b c;
 	inherit (pkgs.lib) foo;
@@ -967,9 +965,7 @@ stdenv.MkDerivaiton[I {
 }
 ```
 
-
 Good, name is clear where it is from.
-
 
 ```nix
 rec {
@@ -982,7 +978,7 @@ rec {
 Bad, pointless.
 
 ```nix
-let 
+let
 	x = 1;
 	y = 2;
 in
@@ -994,12 +990,11 @@ in
 
 Good, very clean. Imagin doing this in a 500 lines of attrset, you will understand rec can bring chaos.
 
-
 ```nix
 stdenv.mkDerivation rec{
 	name = "bla";
 	version = "1.2.3";
-	
+
 	src = someFetcher {
 		url = "...${name}...${version}...";
 		hash = "...";
@@ -1008,7 +1003,6 @@ stdenv.mkDerivation rec{
 ```
 
 Surprisingly if you try to overrwrite the version, it does not change url
-
 
 ```nix
 stdenv.mkDerivation (finalAttrs: {
@@ -1022,14 +1016,13 @@ stdenv.mkDerivation (finalAttrs: {
 })
 ```
 
-Good, override will work. 
+Good, override will work.
 
 Only have one nixpkgs import.
 
-Dont directly overwrite the whole phase, remember to add prehook and posthook. 
+Dont directly overwrite the whole phase, remember to add prehook and posthook.
 
 Avoid nested packages call as it will create a lot of overrides.
-
 
 ### Import from Derivaiton
 
@@ -1069,19 +1062,20 @@ stdenv.mkDerivation {
 EOF
 ```
 
-
 The bad part is, a relevant change to the generator produces a new derivation/store location, even when executing that derivation ultimately generates the same file contents.
 
 ## Advanced Packaging topics
+
 ### Source filtering with lib.fileset
 
 Here is a bad example.
+
 ```nix
 stdenv.mkDerivation {
 	pname = "bla";
-	
+
 	src = ./.;
-	
+
 	#...
 }
 ```
@@ -1091,22 +1085,26 @@ Everything inside the src folder will be copied to Nix Store.
 With source filters, we have more cache hits, and fewer rebuilds, and finally fewer and smaller sources copies into the nix store.
 
 1. Solution 1
+
 ```nix
 src = pkgs.lib.cleanSource ./.;
 ```
+
 This will clean symlink, .o etc...
 
-
 2. Solution 2
+
 ```nix
 src = lib.cleanSourceWith {
 	filter = path: _type: !lib.hasSuffix ".nix" path;
 	src = lib.cleanSource ./.;
 };
 ```
+
 This filters out all the nix file, and when we are inside sandbox nix files are indeed not needed.
 
 3. Standard
+
 ```nix
 src = lib.fileset.toSource {
 	root = ./.;
@@ -1119,14 +1117,15 @@ src = lib.fileset.toSource {
 	];
 };
 ```
+
 This defines all the files union that you actually want.
 
-
 4. Only Copy source files with certain file type
+
 ```nix
 let
 	fs = lib.fileset;
-	extensionOf = extensions: file: 
+	extensionOf = extensions: file:
 		builtins.any file.hasExt extensions;
 in
 fs.toSource {
@@ -1138,8 +1137,8 @@ fs.toSource {
 }
 ```
 
-
 5. Subtract one file list from the other
+
 ```nix
 let
 	fs = lib.fileset;
@@ -1152,9 +1151,46 @@ fs.toSource {
 ```
 
 If you dont understand why some source files are not included, or included, you can use the following command
+
 ```nix
 lib.fileset.traceVal
 ```
 
 But if you start debugging it, it might be a sign that you are doing something too complex already...
 
+### makeWrapper: your own preconfigured version of any program
+
+```nix
+let
+	env = { nativeBuildInputs = [ pkgs.makeWrapper ]; };
+	headless-jre = pkgs.runCommand "headless-jre" env ''
+		mkdir -p $out/bin
+		makeWrapper ${pkgs.jre}/bin/java $out/bin/java \
+			--add-flags  "-Djava.awt.headless=true"
+	'';
+in
+pkgs.plantuml.override { jre = headless-jre; }
+```
+
+What is happening here is simply, the headless-jre is being built by taking the name, then take the environemnt.
+Then we take the shell command that copy the pkgs.jre's java bin into its own java bin. Also we add a flag here.
+
+An example usage is, if you want to create a vim version to share with others, you can use
+
+```nix
+let
+    pkgs = import <nixpkgs> { };
+in
+pkgs.runCommand "team-vim"
+    {
+        nativeBuildInputs = [ pkgs.makeWrapper ];
+    }
+    ''
+    mkdir -p $out/bin
+
+    makeWrapper ${pkgs.vim}/bin/vim $out/bin/team-vim \
+        --add-flags "-N -u ${./vimrc}"
+    ''
+```
+
+Then we can use `nix profile add ./result` to add it so that we can just call team-vim whenever we want.
