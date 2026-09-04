@@ -1194,3 +1194,54 @@ pkgs.runCommand "team-vim"
 ```
 
 Then we can use `nix profile add ./result` to add it so that we can just call team-vim whenever we want.
+
+You can also use `makeBinaryWrapper` which instead of creating a shell script it creates c code that got realized into a binary, and you can execute it.
+
+### Dynamic patching with substituteInPlace
+
+It allows for dynamic patching. You may think, okay why dont I just use `sed`. It is simply because it will give warning if it does not find the patch target.
+
+```nix
+substituteInPlace a.txt b.txt c.txt --replace-fail a b
+
+# replace @x@ and @y@
+export x=1
+export y=2
+
+substituteAll in.txt out.txt
+substituteAllInPlace a.txt b.txt c.txt
+
+```
+
+### PatchShebangs: running scripts in the Nix sandbox
+
+As a matter of fact, inside the nix sandbox you do not have /usr/bin or /bin/bash etc...
+But patchShebangs will patch it for you if the thing you are looking for (Python, bash, Perl, whatever) is inside the path.
+
+```nix
+preBuild = ''
+	patchShebangs ./scripts/
+	./scripts/foo.sh
+'';
+```
+
+But if you do not actually need to run the script during the build phase, then the fixup phase will automatically repoint the shebang to a path inside nix store.
+
+### Cross Complilation
+
+import nixpkgs with crossSystem for aarch64 builds
+
+```nix
+pkgs = import <nixpkgs> { };
+systems = pkgs.lib.systems.examples;
+
+aarch64Pkgs = import <nixpkgs> {
+  crossSystem = system.aarch64-multiplatform;
+};
+```
+
+the idea is that, for nativeBuildInputs, we use our system. for buildInputs, you are compiling for the target host.
+
+So the mental model should be what we are doing is just patching for the buildInputs by making overrideAttrs.
+
+TO make your package cross compilable, we should strictly use the distinction of nativeBuildInputs and buildInputs. We should also use `strictDeps = true`.
