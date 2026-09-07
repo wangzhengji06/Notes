@@ -173,6 +173,29 @@ Avoid build from derivation pattern: Something from a realization, occured durin
 3. Start a pull request for the home manager
 4. Read the dedentric pattern.
 
+## Session 5
+### Dendritic Pattern
+The idea of the dendritic pattern is that, there is a top-level configuration that insides of it, all other things are stored and organized.
+
+What is a configuration? It is an application of the nixos module system. The objective is to store everything inside the top level configuration.
+
+### What did I do 
+The first thing I do here is, I take the outputs part of the flake.nix, and I change it into something that I import that finally becomes flake output.
+
+I then use `nix-shell --run nu -p nix-diff` to start a nix shell with nix-diff enabled inside it.
+
+An important lesson, the flake output must be a synatically obvious function. So Dawn stopped me when I write it as `outputs = import ./outputs.nix`. Instead he insists of using `outputs = inputs: import ./outputs.nix inputs;`
+
+Ok now I have a flake.nix that will have a output that use the above format. I then have an outputs.nix that inside takes input and return flake output for golden and pug. 
+
+Now I change my outputs.nix to return flake output again, but instead of manually importing golden.nix and pug.nix, I use makeFlake function. makeFlake option's second argument takes a flake-part module, so inside that i have to make golden and pug also flake-part module. We then convert golden and pug into flake-part module.
+
+
+
+### Homework
+1. Backup File 
+2. Install a font
+3. Enable vi mode in nushell
 # Session from Online Video
 
 ## Introudction
