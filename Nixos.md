@@ -1268,3 +1268,118 @@ the idea is that, for nativeBuildInputs, we use our system. for buildInputs, you
 So the mental model should be what we are doing is just patching for the buildInputs by making overrideAttrs.
 
 TO make your package cross compilable, we should strictly use the distinction of nativeBuildInputs and buildInputs. We should also use `strictDeps = true`.
+
+## Overlay
+
+### The problem nixpkgs overlays solve
+
+Suppose that we have a package that we want to build, a very simple one.
+
+The package is called app and is directly dependent on libc. What I can do is to directly overrideAttrs libc into my verison of libc', and then I can override the app by making it use libc to build the package..
+
+But if your package has a more complex dependency, then readding those overrides and overrideAttrs woudl be too redundant.
+
+Overlay is the way to solve all these:
+
+1. Add packages
+2. Update/Change packages
+3. All changes can affect pre-existing packages all along
+
+### Overlay basics
+
+Here is an initial example of overlay.nix
+
+overlay.nix:
+
+```nix
+final: prev: {
+    app = prev.callPackage ./app { };
+}
+```
+
+nix-repl
+
+```nix
+pkgs = import <nixpkgs> {overlay = [ (import ./overlay.nix) ]}
+:b pkgs.app
+```
+
+### Surgical overrides: patch one package without rebuilding the whole wolrd
+
+```nix
+final: prev: {
+    opecv4 = prev.opencv4.override {
+    enableGtk3 = true;
+    enableTesseract = true;
+};
+}
+```
+
+But writing this = changes all the opencv4 instance in our building process intot this overridden stuff.
+
+```nix
+final: prev: {
+    opencv4-xxx = final.opencv4.override {
+        enableGtk3 = true;
+        enableTesseract = true;
+    };
+    myApp  = prev.MyApp.override {
+        opencv4 = final.opencv4-xxx;
+    }
+}
+```
+
+By using this, only myApp will be recompiled, also the opencv4-xxx maybe...
+
+The reason why we are using final is to make sure that if more overlays are added, we want to enjoy those changes as well.
+
+### Fixpoinrt recursion: how overlay really works
+
+Will the following nix work?
+
+```nix
+fix = f : let x = f x; in x;
+```
+
+```nix
+fix (s: {
+  x = 1;
+  y = s.x + 1;
+})
+```
+
+It will work, nix knows that, since the function returns an attribute set, it will just give result as attribute set, but what is inside is not evaluated. x will be evaluted to 1, and y will be evaluated to 2, just like what you expect x will be evaluted to 1, and y will be evaluated to 2, just like what you expect.
+
+The right mental model is, the nix is just describing a large DAG. We have a capped amount of memory to do that.
+
+How does nix detect infinite recursion? When it visits the same node, it knows that it is no longer an DAG, so it will raise an exception.
+
+### Nixpkgs Overlays - How to add one packages
+
+Fix point function is just an elegant way to describe tis DAG feature.
+
+Let's go back to the overlay function, we do not want to mdoify the final to create recursion.
+
+RuleSet 1:
+
+1. Use prev by default
+2. Use final only if you reference one package from another source package.
+
+Ruleset 2 (everything is overrideable):
+
+1. Use final by default
+2. Use prev only when you want to avoid recursion.
+
+The advantage of ruleset 2 is that, when another overlay is added, because you are referring to the final, the second overlay will propogated to your final result.
+
+### Overlay Composition
+
+```nix
+ovl1 = final: prev: { ... };
+ovl2 = final: prev: { ... };
+
+combined1 = pkgs.lib.composeExtensions ovl1 ovl2;
+combined2 = pkgs.lib.composeManyExtensions [ ovl1 ovl2 ];
+```
+
+### Overlay Exercise
