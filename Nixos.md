@@ -196,6 +196,42 @@ Now I change my outputs.nix to return flake output again, but instead of manuall
 1. Backup File 
 2. Install a font
 3. Enable vi mode in nushell
+## Sessoon 6
+### Homemanager related stuff
+`overwriteBackup` option will do is, suppose you have `kitty.conf` and `kitty.conf.backup`, then becasue of `backupFileExtension = "backup"`, if you install kitty using homemanager, then it will create a kitty.conf inplace, and rename your kitty.conf to kitty.conf.backup. The original kitty.conf.backup will be overwritten. This is an edge case that is supposed to be handled manually, so `overwriteBackup=true` should not be declared.
+
+`useGlobalPkgs = true` allows you to use the same pkgs source as the nixos pkgs. 
+
+### Resolving the git conflict
+git conflict involves 3 states. The change involves two states, the previous state and the change applied state. Another state is the currently conflicted state that is being applied to. 
+The idea is to let editor show all 3 states, then you can copy the part of the change applied state, and overwrite the whole conflict states, 
+
+After solving the git conflict, remember to use `git reset`.
+
+`git stash show xx -p` to show the stashed thing
+
+### Dendritic Pattern
+
+How to tell a nix file is a flake part module:
+1. it has inputs as argument
+2. it has flake as a provided option
+3. it is being imported using outputs.nix
+
+We need inputs.self as `flake.output` so that we can call other define packages..
+
+Some other good practices: config only pointes to the top level, for all the other config use @ features.
+
+The philosphy is that, we want home.nix to become a flake-part module, but we still want nixos module importing another nixos module. How do we do that? The trick is to provide an option.
+
+What we first did thought, is to refactor golden such that, it provides an option that will be evaluated to a deferred module. That module would go inside evalNixos, and we define that module using lib.mkMerge. I think it is very clean
+
+
+### Homework
+1. Look into Mergiraf
+2. Look into carapace
+3. Install nix-diff
+4. Set up line number in neovim 
+
 # Session from Online Video
 
 ## Introudction
