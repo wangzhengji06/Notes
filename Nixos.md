@@ -196,6 +196,7 @@ Now I change my outputs.nix to return flake output again, but instead of manuall
 1. Backup File 
 2. Install a font
 3. Enable vi mode in nushell
+
 ## Sessoon 6
 ### Homemanager related stuff
 `overwriteBackup` option will do is, suppose you have `kitty.conf` and `kitty.conf.backup`, then becasue of `backupFileExtension = "backup"`, if you install kitty using homemanager, then it will create a kitty.conf inplace, and rename your kitty.conf to kitty.conf.backup. The original kitty.conf.backup will be overwritten. This is an edge case that is supposed to be handled manually, so `overwriteBackup=true` should not be declared.
@@ -231,6 +232,47 @@ What we first did thought, is to refactor golden such that, it provides an optio
 2. Look into carapace
 3. Install nix-diff
 4. Set up line number in neovim 
+
+
+## Session 7
+### Setting the primary value
+`lib.mkDefault` `lib.mkPriority` can set priority value. Default is actually a weak priority, while priority is the high priority.
+We consider this question becasue when I try to use mergegiraf it enforces the diff3 merge style onto my config, so I use mkPriority zdiff3 to claim back without creating a conflict.
+
+### deferredMdoule with apply
+By making use of apply, I can create a wrapper module using apply that takes a module, and inject a key by using
+
+```nix
+apply = module: {
+	key = "golden";
+	imports = [module];
+};
+```
+
+### Change home.nix to flake-part module
+Not much thing to say, just make sure that the config is at the top level, and if you really need nixos module config, pass as a function
+
+### auto-import
+Mainly by making use of the improt-tree.
+
+### Make name automatically computed
+`options.nixos.configurations` defines a custom flake-parts option whose value is a lazily evaluated attribute set of named NixOS configurations. 
+
+`lib.types.lazyAttrsOf (...)` means that arbitrary keys such as `golden`, `laptop`, or `server` may exist under `nixos.configurations`, and each value must have the type specified inside it. That inner type is a `submodule`, meaning every entry such as `nixos.configurations.golden` is itself evaluated as a small module with its own options and module arguments.
+
+Because the submodule comes from a named attribute set, the module system provides its attribute name through the `name` argument, so for `nixos.configurations.golden`, `name` is `"golden"`. Each submodule defines a single option called `module`, whose type is `lib.types.deferredModuleWith`.
+
+A deferred module is module code that is stored now but is not evaluated by the current flake-parts module system; it will later be passed to the NixOS module system. `staticModules` automatically attaches an additional NixOS module to every value stored in this option, so each configuration receives `networking.hostName = lib.mkDefault name`; for `golden`, this effectively provides `networking.hostName = lib.mkDefault "golden"`, while still allowing the user to override it because `mkDefault` has low priority.
+
+After all `nixos.configurations` definitions have been collected, `config.flake.nixosConfigurations` converts them into actual flake outputs. `lib.flip lib.mapAttrs config.nixos.configurations (...)` is equivalent to writing `lib.mapAttrs (...) config.nixos.configurations`: it iterates over every configuration while preserving its attribute name.
+
+For each entry, the callback `name: { module }: ...` receives the configuration name and destructures its value to extract the deferred `module`. It then imports Nixpkgs' `nixos/lib/eval-config.nix` as `evalNixos` and evaluates that module using `evalNixos { system = null; modules = [ module ]; }`. The resulting evaluated NixOS systems are collected into an attribute set and assigned to `config.flake.nixosConfigurations`, meaning a declaration such as `nixos.configurations.golden.module = ...` is ultimately transformed into the normal flake output `nixosConfigurations.golden`.
+
+
+### Homework
+* Bind a key for code action
+* Extract another flake-part module
+>>>>>>> c6504e4 (Notes taken for dawn session)
 
 # Session from Online Video
 
@@ -1418,4 +1460,3 @@ combined1 = pkgs.lib.composeExtensions ovl1 ovl2;
 combined2 = pkgs.lib.composeManyExtensions [ ovl1 ovl2 ];
 ```
 
-### Overlay Exercise
