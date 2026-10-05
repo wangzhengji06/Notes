@@ -274,6 +274,20 @@ For each entry, the callback `name: { module }: ...` receives the configuration 
 * Extract another flake-part module
 >>>>>>> c6504e4 (Notes taken for dawn session)
 
+## Session 8
+### git related stuff
+`git stash apply` vs `git stash pop`. The apply will keeps the change inside stash list. `git reset` is something you should do after `git stash apply`.
+
+### Files vs modules
+Files are topics. They are topics organizing the configs. Modules are things that we used to manage the improt relationship. For example, we want to import a bunch of settings for all the pc. That is like a moudle level stuff. 
+
+### lib.mkBefore lib.mkAfter
+Very niche use case. I feel like it changes the import order.
+
+### Homework
+`nixpkgs.config.allowUnfree = true` What option is that? Survey
+`environment.sessionVariable.NIXOS_OZONE_WL = "1"` Is this option still necessary?
+
 # Session from Online Video
 
 ## Introudction
