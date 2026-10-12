@@ -174,38 +174,43 @@ Avoid build from derivation pattern: Something from a realization, occured durin
 4. Read the dedentric pattern.
 
 ## Session 5
+
 ### Dendritic Pattern
+
 The idea of the dendritic pattern is that, there is a top-level configuration that insides of it, all other things are stored and organized.
 
 What is a configuration? It is an application of the nixos module system. The objective is to store everything inside the top level configuration.
 
-### What did I do 
+### What did I do
+
 The first thing I do here is, I take the outputs part of the flake.nix, and I change it into something that I import that finally becomes flake output.
 
 I then use `nix-shell --run nu -p nix-diff` to start a nix shell with nix-diff enabled inside it.
 
 An important lesson, the flake output must be a synatically obvious function. So Dawn stopped me when I write it as `outputs = import ./outputs.nix`. Instead he insists of using `outputs = inputs: import ./outputs.nix inputs;`
 
-Ok now I have a flake.nix that will have a output that use the above format. I then have an outputs.nix that inside takes input and return flake output for golden and pug. 
+Ok now I have a flake.nix that will have a output that use the above format. I then have an outputs.nix that inside takes input and return flake output for golden and pug.
 
 Now I change my outputs.nix to return flake output again, but instead of manually importing golden.nix and pug.nix, I use makeFlake function. makeFlake option's second argument takes a flake-part module, so inside that i have to make golden and pug also flake-part module. We then convert golden and pug into flake-part module.
 
-
-
 ### Homework
-1. Backup File 
+
+1. Backup File
 2. Install a font
 3. Enable vi mode in nushell
 
 ## Sessoon 6
+
 ### Homemanager related stuff
+
 `overwriteBackup` option will do is, suppose you have `kitty.conf` and `kitty.conf.backup`, then becasue of `backupFileExtension = "backup"`, if you install kitty using homemanager, then it will create a kitty.conf inplace, and rename your kitty.conf to kitty.conf.backup. The original kitty.conf.backup will be overwritten. This is an edge case that is supposed to be handled manually, so `overwriteBackup=true` should not be declared.
 
-`useGlobalPkgs = true` allows you to use the same pkgs source as the nixos pkgs. 
+`useGlobalPkgs = true` allows you to use the same pkgs source as the nixos pkgs.
 
 ### Resolving the git conflict
-git conflict involves 3 states. The change involves two states, the previous state and the change applied state. Another state is the currently conflicted state that is being applied to. 
-The idea is to let editor show all 3 states, then you can copy the part of the change applied state, and overwrite the whole conflict states, 
+
+git conflict involves 3 states. The change involves two states, the previous state and the change applied state. Another state is the currently conflicted state that is being applied to.
+The idea is to let editor show all 3 states, then you can copy the part of the change applied state, and overwrite the whole conflict states,
 
 After solving the git conflict, remember to use `git reset`.
 
@@ -214,6 +219,7 @@ After solving the git conflict, remember to use `git reset`.
 ### Dendritic Pattern
 
 How to tell a nix file is a flake part module:
+
 1. it has inputs as argument
 2. it has flake as a provided option
 3. it is being imported using outputs.nix
@@ -226,20 +232,22 @@ The philosphy is that, we want home.nix to become a flake-part module, but we st
 
 What we first did thought, is to refactor golden such that, it provides an option that will be evaluated to a deferred module. That module would go inside evalNixos, and we define that module using lib.mkMerge. I think it is very clean
 
-
 ### Homework
+
 1. Look into Mergiraf
 2. Look into carapace
 3. Install nix-diff
-4. Set up line number in neovim 
-
+4. Set up line number in neovim
 
 ## Session 7
+
 ### Setting the primary value
+
 `lib.mkDefault` `lib.mkPriority` can set priority value. Default is actually a weak priority, while priority is the high priority.
 We consider this question becasue when I try to use mergegiraf it enforces the diff3 merge style onto my config, so I use mkPriority zdiff3 to claim back without creating a conflict.
 
 ### deferredMdoule with apply
+
 By making use of apply, I can create a wrapper module using apply that takes a module, and inject a key by using
 
 ```nix
@@ -250,13 +258,16 @@ apply = module: {
 ```
 
 ### Change home.nix to flake-part module
+
 Not much thing to say, just make sure that the config is at the top level, and if you really need nixos module config, pass as a function
 
 ### auto-import
+
 Mainly by making use of the improt-tree.
 
 ### Make name automatically computed
-`options.nixos.configurations` defines a custom flake-parts option whose value is a lazily evaluated attribute set of named NixOS configurations. 
+
+`options.nixos.configurations` defines a custom flake-parts option whose value is a lazily evaluated attribute set of named NixOS configurations.
 
 `lib.types.lazyAttrsOf (...)` means that arbitrary keys such as `golden`, `laptop`, or `server` may exist under `nixos.configurations`, and each value must have the type specified inside it. That inner type is a `submodule`, meaning every entry such as `nixos.configurations.golden` is itself evaluated as a small module with its own options and module arguments.
 
@@ -268,25 +279,87 @@ After all `nixos.configurations` definitions have been collected, `config.flake.
 
 For each entry, the callback `name: { module }: ...` receives the configuration name and destructures its value to extract the deferred `module`. It then imports Nixpkgs' `nixos/lib/eval-config.nix` as `evalNixos` and evaluates that module using `evalNixos { system = null; modules = [ module ]; }`. The resulting evaluated NixOS systems are collected into an attribute set and assigned to `config.flake.nixosConfigurations`, meaning a declaration such as `nixos.configurations.golden.module = ...` is ultimately transformed into the normal flake output `nixosConfigurations.golden`.
 
-
 ### Homework
-* Bind a key for code action
-* Extract another flake-part module
->>>>>>> c6504e4 (Notes taken for dawn session)
+
+- Bind a key for code action
+- Extract another flake-part module
 
 ## Session 8
+
 ### git related stuff
+
 `git stash apply` vs `git stash pop`. The apply will keeps the change inside stash list. `git reset` is something you should do after `git stash apply`.
 
 ### Files vs modules
-Files are topics. They are topics organizing the configs. Modules are things that we used to manage the improt relationship. For example, we want to import a bunch of settings for all the pc. That is like a moudle level stuff. 
+
+Files are topics. They are topics organizing the configs. Modules are things that we used to manage the improt relationship. For example, we want to import a bunch of settings for all the pc. That is like a moudle level stuff.
 
 ### lib.mkBefore lib.mkAfter
+
 Very niche use case. I feel like it changes the import order.
 
 ### Homework
+
 `nixpkgs.config.allowUnfree = true` What option is that? Survey
 `environment.sessionVariable.NIXOS_OZONE_WL = "1"` Is this option still necessary?
+
+## Session 9
+
+### nix flake check
+
+it is a command that is used to check whether the flake evaulates and run its tests.
+A check is a derivation. if the derivation builds successfully, then the check is a success.
+Check is organized in the form that, each system is an attrset of derivation.
+A probable workflow is `nix flake update` and `nix flake check`, then you are know whether the derivation is built okay.
+
+### nix's status in nixpkgs
+
+nix has mutiple versions for download in nixpkgs. You have to tell what version you want to use. Check dawn's config for that.
+
+### How do we provide the perSystem with the packages?
+
+```nix
+systems = ["x86_64-linux"];
+
+perSystem = {pkgs, system,  ...}: {checks = {make = pkgs.gnumake;}; inherit system;};
+
+```
+
+Supposed that we manually provide the system. This is of course not good, because we wnat this to be autmoatically covered.
+The above command does not work here, because flake-part by default use the input.nixpkgs. I use `flake=false`. This happens to have problem because the flake-part want legacyPackage.
+
+Why does nixos configuration's pkgs instantiation work? Because in that case, it does its own instantiation, and in hardware.nix I define the system to be x86_64. But flake-part will not read something like that, it requires someone to expose that system info to it.
+
+How do we solve this? We provide our own way of instantiation.
+
+```nix
+  perSystem = {system, ...}: {
+    _module.args.pkgs = import inputs.nixpkgs {
+      config = {};
+      inherit system;
+      overlays = [];
+    };
+  };
+```
+
+### How do we tell nix flake check what system of packages we want to build?
+
+flake part can take systems variable.
+
+```nix
+systems = ["x86_64-linux"];
+```
+
+Then perSystem can take a module with system as the parameter, and use that list for the build.
+
+But this is not good. Ideal way would be, we construct this list from extracting values from each nixos configuration.
+
+### Homework
+
+1. Search the hyprland related variable in nixos wiki
+2. Consider dawn's alias for git clone
+3. Get newest version of nix
+4. Consider armilaria file navigation, picker, treesitter, syntax highlighting, which key, github cli gh(home manager programs gh)
 
 # Session from Online Video
 
@@ -1473,4 +1546,3 @@ ovl2 = final: prev: { ... };
 combined1 = pkgs.lib.composeExtensions ovl1 ovl2;
 combined2 = pkgs.lib.composeManyExtensions [ ovl1 ovl2 ];
 ```
-
