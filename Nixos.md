@@ -361,6 +361,102 @@ But this is not good. Ideal way would be, we construct this list from extracting
 3. Get newest version of nix
 4. Consider armilaria file navigation, picker, treesitter, syntax highlighting, which key, github cli gh(home manager programs gh)
 
+## Session 10
+### Pipe-operator
+Pipe-operator basically change the order of applying function to variable in nix.
+Nix uses function variable format. pipe use format like variable |> function. 
+
+
+### How do we make it such that vm-variant has every user's password set as empty?
+```nix
+{lib, ...}: {
+  nixos.modules.base = {
+    virtualisation.vmVariant = {
+      options.users.users = lib.mkOption {
+        type = lib.types.attrsOf (lib.types.submodule {
+          initialPassword = "";
+        });
+      };
+      config = {
+        virtualisation = {
+          cores = 8;
+          memorySize = 4096;
+          qemu.options = ["-device virtio-balloon" "-vga none" "-display gtk,gl=on" "-monitor none" "-device virtio-vga-gl"];
+        };
+      };
+    };
+  };
+}
+```
+
+Why does this work? 
+Because nixos allows us to merge comptaible options. 
+The only thing need to notice that this is declared as a normal priority. So if you want to overwrite it you need to use `lib.mkPriority`.
+
+This option merging feature is not a nix language feature, it is more of nix module system feature that is achieved through `lib.evalModules`.
+
+### Generate Files(readme/gitignore) in a flake project
+```nix
+{
+  config,
+  lib,
+  ...
+}: let
+  cfg = config.git.ignore;
+in {
+  options.git.ignore = lib.mkOption {
+    type = lib.types.listOf lib.types.str;
+    apply = lib.naturalSort;
+  };
+
+  config = {
+    perSystem.files.file.".gitignore".text = cfg |> lib.concatLines;
+  };
+}
+```
+
+This file declares git.ignore as an option of type list of strings, and provide the config for perSystem.files.file.".gitignore".text. This config is provided by the options declared in perSystem.files.file.
+
+```nix
+{
+  inputs,
+  config,
+  lib,
+  ...
+}: {
+  imports = ["${inputs.files}/flake-module.nix"];
+  systems =
+    lib.flip lib.mapAttrsToList config.nixos.configurations
+    (name: {configuration, ...}: configuration.pkgs.stdenv.hostPlatform.system);
+
+  perSystem = {system, ...}: {
+    _module.args.pkgs = import inputs.nixpkgs {
+      config = {};
+      inherit system;
+      overlays = [];
+    };
+
+    files.writer.app = true;
+  };
+
+  debug = true;
+}
+```
+Why do we need `imports = ["${inputs.files}/flake-module.nix"];`? Because adding a flake to inputs does not automatically import its modules.
+
+```nix
+git.ignore = ["/result*"];
+```
+And you can declare the git ignore config elsewhere.
+
+
+### nix flake check does not generate file for me, but after I create the file, nix flake check will help me update file
+This is kind of puzzling me right now.
+
+### Homework
+1. Why does gh login fail to work?
+2. Nixvim split
+3. Read pure/impure nix
 # Session from Online Video
 
 ## Introudction
