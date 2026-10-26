@@ -457,6 +457,73 @@ This is kind of puzzling me right now.
 1. Why does gh login fail to work?
 2. Nixvim split
 3. Read pure/impure nix
+## Session 11
+### The review for last time homework
+When writing a flake-parts module, we should explicitly distinguish which lib and config we're referring to, since these names can also appear in NixOS and NixVim modules.
+For pkgs, this is less of a concern because it isn't available as a module argument at the flake-parts top level. It's normally provided within perSystem
+
+### Pure/Impure nix
+Pure/Impure nix the article itself is by using a trick that, if we do not actually rely on the content of the fetched input, we can evaluate it under the pure mode by replacing the output with some predetermined magic string.
+
+There are two main types of fetchers in Nix: evaluation-time fetchers, such as builtins.fetchGit, and build-time fetchers, such as pkgs.fetchFromGitHub.
+
+Normal sandboxed builds cannot access the network. However, fixed-output derivations are an exception: they can download resources as long as their output matches a predefined hash. Actually, `pkgs.fetchFromGitHub` is itself a fixed-output derivation (FOD).
+
+If we don't know the hash, we can use a placeholder hash and obtain the correct one from the build error.
+
+Flake inputs are also fetched before evaluating the flake outputs. This is necessary because the inputs may contain Nix expressions required during evaluation. Flakes maintain reproducibility by recording locked revisions and content hashes in flake.lock.
+
+We actually create an experiment, by calling `builtin.fetchGit` and `pkgs.fetchFromGithub` we create same derivation store path, which shows that it is indeed content based. 
+
+### Add check for pug and golden
+Pug was simple
+```nix
+flake = {
+...
+checks.x86_64-linux.pug = 
+	config.flake.packages.x86_64-linux.pug;
+}
+```
+
+Nixos part is hard. I need to construct something like `flake.check.system = {golden = xxx; silver = xxx};`
+The system is contained inside the configuration file of each system though, this order is hard for us to manipulate.
+
+
+the solution is as follows:
+```nix
+config.nixos.configurations
+|> lib.mapAttrsToList
+(name: {configuration, ...}: {
+  ${configuration.pkgs.stdenv.hostPlatform.system}."nixosConfiguration:${name}" =
+    configuration.config.system.build.toplevel;
+})
+```
+
+This code uses List to merge many machines' configuration under same x86_64-linux property.
+
+### Nom 
+Give beautiful tree view using `nom flake check`.
+`abort-on-warn` allows the nixflake check to stop when it reaches a warnjing
+
+### Define per system for pug
+```nix
+    perSystem = perSystemArgs @ {system, ...}: {
+      packages.pug =
+        (
+          lib'.nixvim.evalNixvim {
+            inherit system;
+            modules = [config.pug.module];
+          }
+        ).config.build.package;
+```
+
+What we did here is simple, just change the flake to perSystem. 
+
+### Homework
+1. Consider repository/formatting.nix
+2. Consider repository/linting.nix
+3. Condier neovim treesitter-context, read nixvim doc by the way.
+
 # Session from Online Video
 
 ## Introudction
